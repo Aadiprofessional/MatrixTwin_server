@@ -12,8 +12,8 @@ const disableRLS = async (req, res, next) => {
   try {
     // Create a new supabase client with service role key for bypassing RLS
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://ahtardktcamfwgjuwmeb.supabase.co';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NTMxMjk4MiwiZXhwIjoyMDYwODg4OTgyfQ.ij2Mtjtcxt8o3sDO4xYaWfyOa30QTS0VIIDjGp_9b6c';
+    const supabaseUrl = process.env.SUPABASE_URL || 'https://supabase.matrixaiserver.com';
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     
     req.supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: {

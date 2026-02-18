@@ -54,8 +54,8 @@ const resend = new Resend('re_CYa5oG13_ECrEJT5L42u1VydajXWK6W8s');
 const disableRLS = async (req, res, next) => {
   try {
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://ahtardktcamfwgjuwmeb.supabase.co';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMjE4NzI5NCwiZXhwIjoyMDQ3NzYzMjk0fQ.YCJJhJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJG';
+    const supabaseUrl = process.env.SUPABASE_URL || 'https://supabase.matrixaiserver.com';
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     
     req.supabaseAdmin = createClient(supabaseUrl, serviceKey, {
       auth: {

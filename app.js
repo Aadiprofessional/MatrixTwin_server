@@ -1,0 +1,174 @@
+const express = require('express');
+const cors = require('cors');
+const morgan = require('morgan');
+const { createSupabaseClient } = require('./supabase-client');
+
+// Import all route modules
+const testRoutes = require('./routes/test');
+const authRoutes = require('./routes/auth');
+const projectRoutes = require('./routes/projects');
+const formRoutes = require('./routes/forms');
+const customFormRoutes = require('./routes/customForms');
+const bimfaceRoutes = require('./routes/bimface');
+const dashscopeRoutes = require('./routes/dashscope');
+const emailRoutes = require('./routes/email');
+const diaryRoutes = require('./routes/diary');
+const notificationRoutes = require('./routes/notifications');
+const templateRoutes = require('./routes/template');
+const smartlockRoutes = require('./routes/smartlock');
+const cleansingRoutes = require('./routes/cleansing');
+const labourRoutes = require('./routes/labour');
+const safetyRoutes = require('./routes/safety');
+const inspectionRoutes = require('./routes/inspection');
+const surveyRoutes = require('./routes/survey');
+
+const app = express();
+
+// Middleware setup - CORS temporarily disabled for testing
+// app.use(cors({
+//   origin: true,
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+//   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+//   credentials: true
+// }));
+
+// Manual CORS headers instead
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
+// Enable express body parsing
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Add logging in development
+if (process.env.NODE_ENV !== 'production') {
+  app.use(morgan('dev'));
+}
+
+// Supabase client middleware
+app.use((req, res, next) => {
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL || 'https://ahtardktcamfwgjuwmeb.supabase.co';
+    
+    // Use service role key for database operations to bypass RLS
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzMTI5ODIsImV4cCI6MjA2MDg4ODk4Mn0.9yk6uUEpX-eIHTziSlG9nTDmKb2LRR0YY_P0pH6A_lc';
+    
+    console.log('Supabase client configuration:', {
+      url: supabaseUrl,
+      keyType: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON'
+    });
+    
+    req.supabase = createSupabaseClient(supabaseUrl, supabaseKey);
+    console.log('Supabase client created successfully');
+    next();
+  } catch (error) {
+    console.error('Supabase client error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'BuildSphere API is running on Alibaba Cloud',
+    version: '1.0.0',
+    platform: 'alibaba-cloud',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      auth: '/api/auth',
+      projects: '/api/projects',
+      forms: '/api/forms',
+      customForms: '/api/custom-forms',
+      bimface: '/api/bimface',
+      dashscope: '/api/dashscope',
+      email: '/api/email',
+      diary: '/api/diary',
+      notifications: '/api/notifications',
+      templates: '/api/templates',
+      smartlock: '/api/smartlock',
+      cleansing: '/api/cleansing',
+      labour: '/api/labour',
+      safety: '/api/safety',
+      inspection: '/api/inspection',
+      survey: '/api/survey',
+      test: '/api/test'
+    }
+  });
+});
+
+// Route setup
+app.use('/api/test', testRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/forms', formRoutes);
+app.use('/api/custom-forms', customFormRoutes);
+app.use('/api/bimface', bimfaceRoutes);
+app.use('/api/dashscope', dashscopeRoutes);
+app.use('/api/email', emailRoutes);
+app.use('/api/diary', diaryRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/templates', templateRoutes);
+app.use('/api/smartlock', smartlockRoutes);
+app.use('/api/cleansing', cleansingRoutes);
+app.use('/api/labour', labourRoutes);
+app.use('/api/safety', safetyRoutes);
+app.use('/api/inspection', inspectionRoutes);
+app.use('/api/survey', surveyRoutes);
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Route ${req.originalUrl} not found`,
+    method: req.method,
+    availableEndpoints: [
+      '/api/auth',
+      '/api/projects', 
+      '/api/forms',
+      '/api/custom-forms',
+      '/api/bimface',
+      '/api/dashscope',
+      '/api/email',
+      '/api/diary',
+      '/api/notifications',
+      '/api/templates',
+      '/api/smartlock',
+      '/api/cleansing',
+      '/api/labour',
+      '/api/safety',
+      '/api/inspection',
+      '/api/survey',
+      '/api/test'
+    ]
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global error handler:', err);
+  res.status(err.status || 500).json({
+    error: 'Internal Server Error',
+    message: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
+// Start server only if run directly (not in serverless)
+if (require.main === module) {
+  const PORT = process.env.PORT || 5001;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

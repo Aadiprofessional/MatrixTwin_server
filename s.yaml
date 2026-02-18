@@ -1,0 +1,36 @@
+edition: 1.0.0
+name: buildsphere-api
+access: default
+
+services:
+  buildsphere-nodejs:
+    component: fc
+    props:
+      region: cn-hangzhou
+      service:
+        name: buildsphere-service
+        internetAccess: true
+        logConfig:
+          project: buildsphere-log-project        
+          logstore: buildsphere-log-project 
+      function:
+        name: buildsphere-api
+        runtime: nodejs18
+        codeUri: ./
+        handler: handler.handler # <-- matches handler.js and exports.handler
+        memorySize: 1024
+        timeout: 300
+        environmentVariables:
+          SUPABASE_URL: https://ahtardktcamfwgjuwmeb.supabase.co
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUzMTI5ODIsImV4cCI6MjA2MDg4ODk4Mn0.9yk6uUEpX-eIHTziSlG9nTDmKb2LRR0YY_P0pH6A_lc
+          SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NTMxMjk4MiwiZXhwIjoyMDYwODg4OTgyfQ.ij2Mtjtcxt8o3sDO4xYaWfyOa30QTS0VIIDjGp_9b6c
+          JWT_SECRET: 6bFuNsTm9yckcFZixLORkDJ4CPNu/ZmzNqTZeN2Sxk3YXWzIhPE+Ebg6LfN+tl68MDhtI31FMk3zV0a0tzAo5Q==
+          NODE_ENV: development
+          EMAIL_CONFIRM_REDIRECT_URL: http://localhost:3000/auth/confirm
+          PASSWORD_RESET_REDIRECT_URL: http://localhost:3000/auth/reset-password
+        events:
+          - name: httpTrigger
+            type: http
+            config:
+              authType: anonymous
+              methods: [ GET, POST, PUT, DELETE, OPTIONS, PATCH ]

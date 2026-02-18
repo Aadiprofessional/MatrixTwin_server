@@ -1,0 +1,53 @@
+{
+  "name": "buildsphere-server",
+  "version": "1.0.0",
+  "description": "BuildSphere backend API server",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "init-db": "node scripts/init-db.js",
+    "test-api": "node scripts/test-api.js",
+    "create-demo-data": "node scripts/create-demo-data.js",
+    "test-bimface-async": "node test-bimface-async.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.4",
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.2",
+    "bull": "^4.12.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "form-data": "^4.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
+    "postgres": "^3.4.5",
+    "redis": "^4.6.13",
+    "resend": "^4.6.0",
+    "serverless-http": "^3.2.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aadiprofessional/MatrixBIM_server.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Aadiprofessional/MatrixBIM_server/issues"
+  },
+  "homepage": "https://github.com/Aadiprofessional/MatrixBIM_server#readme"
+}

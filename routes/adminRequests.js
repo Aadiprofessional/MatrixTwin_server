@@ -48,6 +48,43 @@ router.post('/request-admin', auth, async (req, res) => {
     }
 });
 
+/**
+ * @route   GET /api/admin-requests/my-request
+ * @desc    Get the current user's most recent admin request
+ * @access  Private
+ */
+router.get('/my-request', auth, async (req, res) => {
+    try {
+        const supabase = req.supabase;
+        const userId = req.user.id;
+
+        // Fetch the most recent request for this user
+        const { data: request, error } = await supabase
+            .from('admin_requests')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error) {
+            console.error('Error fetching my-request:', error);
+            return res.status(500).json({ message: 'Server error fetching request' });
+        }
+
+        if (!request) {
+            return res.status(404).json({ message: 'No admin request found' });
+        }
+
+        // Return the request, including status and rejection_reason
+        res.json(request);
+
+    } catch (err) {
+        console.error('Error in my-request endpoint:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 // 2. Edit/Resubmit Request
 router.put('/request-admin/:id', auth, async (req, res) => {
     try {

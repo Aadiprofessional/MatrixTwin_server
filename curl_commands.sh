@@ -47,6 +47,15 @@ curl -X POST "$BASE_URL/api/admin-requests/request-admin" \
   }'
 echo -e "\n"
 
+# 1.1.1 Get My Admin Request (User)
+echo "Getting My Admin Request as User..."
+curl -X GET "$BASE_URL/api/admin-requests/my-request" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: $USER_ID" \
+  -H "dev-role: user" \
+  -H "Content-Type: application/json"
+echo -e "\n"
+
 # 1.2 List Requests (Owner)
 echo "Listing Admin Requests as Owner..."
 curl -X GET "$BASE_URL/api/admin-requests/requests" \

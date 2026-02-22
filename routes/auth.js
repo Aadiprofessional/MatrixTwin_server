@@ -3,6 +3,7 @@ const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { createClient } = require('@supabase/supabase-js');
 const { auth, adminOnly } = require('../middleware/auth');
 
 // Simple in-memory rate limiter for password reset
@@ -62,6 +63,7 @@ router.post(
     body('name').not().isEmpty().withMessage('Name is required'),
     body('email').isEmail().withMessage('Please include a valid email'),
     body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+    body('company_code').optional().isString().withMessage('Company code must be a string'),
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -69,26 +71,48 @@ router.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { name, email, password } = req.body;
+    const { name, email, password, company_code } = req.body;
     const { supabase } = req;
+    
+    console.log('Signup Request:', { name, email, company_code });
 
     try {
-      // First check if the user already exists
-      const { data: existingUsers, error: searchError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', email);
+      // Check company code first if provided
+      let companyId = null;
+      if (company_code) {
+        console.log(`Checking company code: "${company_code}" (Upper: "${company_code.toUpperCase()}")`);
         
-      if (searchError) {
-        console.error('Error checking existing user:', searchError);
-        throw searchError;
-      }
-      
-      if (existingUsers && existingUsers.length > 0) {
-        return res.status(400).json({ message: 'User with this email already exists' });
+        // Use RPC to bypass RLS since unauthenticated users cannot select from companies table
+        const { data: foundId, error: rpcError } = await supabase.rpc('get_company_by_code', { 
+            company_code: company_code.toUpperCase().trim() 
+        });
+
+        if (rpcError) {
+            console.error('Error calling get_company_by_code RPC:', rpcError);
+            // Fallback to direct query if RPC fails (e.g. not created yet), but this will fail if RLS is on
+            const { data: company, error: companyError } = await supabase
+              .from('companies')
+              .select('id')
+              .eq('code', company_code.toUpperCase())
+              .maybeSingle();
+            
+            if (companyError) {
+                 console.error('Error checking company code directly:', companyError);
+                 return res.status(400).json({ message: 'Error validating company code' });
+            }
+            if (company) companyId = company.id;
+        } else {
+            companyId = foundId;
+        }
+        
+        if (!companyId) {
+            return res.status(400).json({ message: 'Invalid Company Code' });
+        }
       }
 
       // Sign up user using Supabase Auth
+      // Note: We rely on a Postgres Trigger to create the record in public.users table
+      // This is safer and ensures consistency without needing Service Role keys on the client
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -107,28 +131,65 @@ router.post(
       }
 
       if (authData.user) {
-        // Store additional user data in the users table
-        const userData = {
-          id: authData.user.id,
-          name,
-          email,
-          role: DEFAULT_ROLE,
-          password: 'SUPABASE_AUTH_USER',
-          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0062C3&color=fff`
-        };
-
-        const { error: userError } = await supabase
-          .from('users')
-          .insert([userData]);
-
-        if (userError) {
-          console.error('User data insertion error:', userError);
-          throw userError;
+        // If company code was provided, create a join request
+        if (companyId) {
+            try {
+                // We use a scoped client if the user is authenticated (session available)
+                // If not, we fall back to RPC or simply fail gracefully (user confirms email first)
+                if (authData.session) {
+                    const userClient = createClient(
+                        process.env.SUPABASE_URL,
+                        process.env.SUPABASE_ANON_KEY,
+                        {
+                            global: {
+                                headers: {
+                                    Authorization: `Bearer ${authData.session.access_token}`
+                                }
+                            }
+                        }
+                    );
+                    
+                    const { error: joinError } = await userClient
+                        .from('company_join_requests')
+                        .insert({
+                            company_id: companyId,
+                            user_id: authData.user.id,
+                            status: 'pending'
+                        });
+                    
+                    if (joinError) {
+                        console.error('Error creating join request with user session:', joinError);
+                    } else {
+                        console.log('Join request created successfully for user:', authData.user.id);
+                    }
+                } else {
+                    // Try using RPC if no session (e.g. email confirm required)
+                    // Note: RPC must be SECURITY DEFINER to bypass RLS
+                    const { error: rpcJoinError } = await supabase.rpc('create_join_request_by_code', {
+                        company_code: company_code.toUpperCase().trim(),
+                        p_user_id: authData.user.id
+                    });
+                    
+                    if (rpcJoinError) {
+                        console.error('Error creating join request via RPC (User not logged in yet):', rpcJoinError);
+                        // This is expected if the RPC doesn't exist or permissions block it.
+                        // The user can request to join later manually.
+                    } else {
+                         console.log('Join request created via RPC for user:', authData.user.id);
+                    }
+                }
+            } catch (joinErr) {
+                console.error('Exception creating join request:', joinErr);
+            }
         }
 
         // Create JWT with user data
         const token = jwt.sign(
-          { id: authData.user.id, role: DEFAULT_ROLE },
+          { 
+            id: authData.user.id, 
+            role: DEFAULT_ROLE,
+            sb_token: authData.session?.access_token // Store Supabase access token if available
+          },
           process.env.JWT_SECRET || 'jwtsecrettoken',
           { expiresIn: '1d' }
         );
@@ -140,7 +201,7 @@ router.post(
             name,
             email,
             role: DEFAULT_ROLE,
-            avatar: userData.avatar
+            avatar: authData.user.user_metadata?.avatar
           }
         });
       } else {
@@ -194,32 +255,40 @@ router.post(
         return res.status(400).json({ message: 'Authentication failed' });
       }
 
-      // Get user data directly without RLS
-      const { data: users, error: userError } = await supabase
+      // Get user data directly
+      // Note: We're selecting from public.users which should be populated by the trigger
+      // If the trigger failed or is slow, this might return null, so we should handle that
+      const { data: userData, error: userError } = await supabase
         .from('users')
         .select('id, name, email, role, avatar')
-        .eq('id', authData.user.id);
+        .eq('id', authData.user.id)
+        .single();
 
       if (userError) {
         console.error('User data fetch error:', userError);
-        throw userError;
-      }
-
-      const userData = users[0];
-      if (!userData) {
-        return res.status(404).json({ message: 'User data not found' });
+        // Fallback if public user record doesn't exist yet (rare race condition or trigger failure)
+        // We can just return basic auth data
       }
 
       // Create JWT
       const token = jwt.sign(
-        { id: userData.id, role: userData.role },
+        { 
+          id: authData.user.id, 
+          role: userData?.role || 'user',
+          sb_token: authData.session.access_token // Store Supabase access token
+        },
         process.env.JWT_SECRET || 'jwtsecrettoken',
         { expiresIn: '1d' }
       );
 
       res.json({
         token,
-        user: userData
+        user: userData || {
+          id: authData.user.id,
+          email: authData.user.email,
+          role: 'user',
+          avatar: authData.user.user_metadata?.avatar
+        }
       });
     } catch (err) {
       console.error('Login error:', err);

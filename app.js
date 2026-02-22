@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -21,6 +22,8 @@ const labourRoutes = require('./routes/labour');
 const safetyRoutes = require('./routes/safety');
 const inspectionRoutes = require('./routes/inspection');
 const surveyRoutes = require('./routes/survey');
+const adminRoutes = require('./routes/admin');
+const companyRoutes = require('./routes/companies');
 
 const app = express();
 
@@ -101,7 +104,9 @@ app.get('/', (req, res) => {
       safety: '/api/safety',
       inspection: '/api/inspection',
       survey: '/api/survey',
-      test: '/api/test'
+      test: '/api/test',
+      admin: '/api/admin',
+      companies: '/api/companies'
     }
   });
 });
@@ -109,6 +114,8 @@ app.get('/', (req, res) => {
 // Route setup
 app.use('/api/test', testRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/companies', companyRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/custom-forms', customFormRoutes);

@@ -37,13 +37,22 @@ router.get('/list', auth, async (req, res) => {
 
         // 1. Owner (Super Admin) - View ALL projects
         if (userRole === 'owner') {
-            console.log('User is owner, fetching all projects');
+            console.log('User is owner, fetching all projects via RPC');
+            // Use RPC to bypass RLS recursion
             const { data: projects, error } = await supabase
-                .from('projects')
-                .select('*, members:project_members(user_id, role)')
-                .order('created_at', { ascending: false });
+                .rpc('get_all_projects_owner');
 
-            if (error) throw error;
+            if (error) {
+                console.error('RPC get_all_projects_owner failed:', error);
+                // Fallback to normal query if RPC doesn't exist (though RLS might fail)
+                const { data: projectsFallback, error: errorFallback } = await supabase
+                    .from('projects')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (errorFallback) throw errorFallback;
+                return res.json(projectsFallback);
+            }
             return res.json(projects);
         }
 
@@ -63,31 +72,49 @@ router.get('/list', auth, async (req, res) => {
 
         // 3. Admin - View all company projects
         if (membership.role === 'admin' || membership.role === 'owner') {
-            // Note: 'owner' in company_members might just be Company Owner, treated as Admin here
-            // unless they are also Global Owner (handled above).
-            console.log('User is admin/company-owner, fetching company projects');
+            console.log('User is admin/company-owner, fetching company projects via RPC');
+            
+            // Try RPC first
             const { data: projects, error } = await supabase
-                .from('projects')
-                .select('*, members:project_members(user_id, role)')
-                .eq('company_id', membership.company_id)
-                .order('created_at', { ascending: false });
+                .rpc('get_company_projects', { p_company_id: membership.company_id });
 
-            if (error) throw error;
+            if (error) {
+                console.error('RPC get_company_projects failed, falling back to RLS:', error);
+                const { data: projectsFallback, error: errorFallback } = await supabase
+                    .from('projects')
+                    .select('*, members:project_members(user_id, role)')
+                    .eq('company_id', membership.company_id)
+                    .order('created_at', { ascending: false });
+
+                if (errorFallback) throw errorFallback;
+                return res.json(projectsFallback);
+            }
             return res.json(projects);
         }
 
         // 4. Member - View only assigned projects
         if (membership.role === 'member') {
-            console.log('User is member, fetching assigned projects');
-            // Use !inner join to filter projects where user is a member
+            console.log('User is member, fetching assigned projects via RPC');
+            
+            // Try RPC first
             const { data: projects, error } = await supabase
-                .from('projects')
-                .select('*, members:project_members!inner(user_id, role)')
-                .eq('company_id', membership.company_id)
-                .eq('members.user_id', userId)
-                .order('created_at', { ascending: false });
+                .rpc('get_member_projects', { 
+                    p_user_id: userId, 
+                    p_company_id: membership.company_id 
+                });
 
-            if (error) throw error;
+            if (error) {
+                console.error('RPC get_member_projects failed, falling back to RLS:', error);
+                const { data: projectsFallback, error: errorFallback } = await supabase
+                    .from('projects')
+                    .select('*, members:project_members!inner(user_id, role)')
+                    .eq('company_id', membership.company_id)
+                    .eq('members.user_id', userId)
+                    .order('created_at', { ascending: false });
+
+                if (errorFallback) throw errorFallback;
+                return res.json(projectsFallback);
+            }
             return res.json(projects);
         }
 

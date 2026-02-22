@@ -24,14 +24,30 @@ const upload = multer({
 });
 
 // Get all projects
-// If Admin/Owner: List all projects for the company
-// If Member: List only assigned projects
-router.get('/', auth, async (req, res) => {
+// Owner: List all projects
+// Admin: List all projects for the company
+// Member: List only assigned projects
+router.get('/list', auth, async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
+        const userRole = req.user.role; // Role from JWT
 
-        // Get user's company membership
+        console.log(`[GET /list] User: ${userId}, Role: ${userRole}`);
+
+        // 1. Owner (Super Admin) - View ALL projects
+        if (userRole === 'owner') {
+            console.log('User is owner, fetching all projects');
+            const { data: projects, error } = await supabase
+                .from('projects')
+                .select('*, members:project_members(user_id, role)')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            return res.json(projects);
+        }
+
+        // 2. Get user's company membership for Admin/Member
         const { data: membership, error: memberError } = await supabase
             .from('company_members')
             .select('company_id, role')
@@ -39,41 +55,60 @@ router.get('/', auth, async (req, res) => {
             .single();
 
         if (memberError || !membership) {
+            console.log('User has no company membership');
             return res.status(404).json({ message: 'User does not belong to any company' });
         }
+        
+        console.log(`User company membership: ${JSON.stringify(membership)}`);
 
-        let query = supabase
-            .from('projects')
-            .select('*, members:project_members(user_id, role, user:user_id(name, email))')
-            .eq('company_id', membership.company_id)
-            .order('created_at', { ascending: false });
+        // 3. Admin - View all company projects
+        if (membership.role === 'admin' || membership.role === 'owner') {
+            // Note: 'owner' in company_members might just be Company Owner, treated as Admin here
+            // unless they are also Global Owner (handled above).
+            console.log('User is admin/company-owner, fetching company projects');
+            const { data: projects, error } = await supabase
+                .from('projects')
+                .select('*, members:project_members(user_id, role)')
+                .eq('company_id', membership.company_id)
+                .order('created_at', { ascending: false });
 
-        if (membership.role !== 'admin' && membership.role !== 'owner') {
-            // For regular members, we rely on RLS policies to filter visibility.
-            // But we can also join to check explicitly if needed. 
-            // Since we set RLS to "Members can view assigned projects", the query on 'projects' 
-            // might return empty if the user is not assigned to any project, 
-            // OR Supabase might throw error if we try to select all.
-            // Actually RLS filters rows. So selecting * from projects will return only visible rows.
+            if (error) throw error;
+            return res.json(projects);
         }
 
-        const { data: projects, error } = await query;
+        // 4. Member - View only assigned projects
+        if (membership.role === 'member') {
+            console.log('User is member, fetching assigned projects');
+            // Use !inner join to filter projects where user is a member
+            const { data: projects, error } = await supabase
+                .from('projects')
+                .select('*, members:project_members!inner(user_id, role)')
+                .eq('company_id', membership.company_id)
+                .eq('members.user_id', userId)
+                .order('created_at', { ascending: false });
 
-        if (error) throw error;
+            if (error) throw error;
+            return res.json(projects);
+        }
 
-        res.json(projects);
+        // Default: Access denied if role not recognized
+        return res.status(403).json({ message: 'Access denied' });
+
     } catch (err) {
         console.error('Error fetching projects:', err);
         res.status(500).json({ message: 'Server error' });
     }
 });
 
-// Create new project (Admin/Owner only)
-router.post('/', [auth, upload.single('image')], async (req, res) => {
+// Create new project (Admin only - in their own company)
+router.post('/create', [auth, upload.single('image')], async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
+        // const userRole = req.user.role; // Not relying on global role for this, checking company role
         const { name, description, status, location, client, deadline } = req.body;
+
+        console.log(`[POST /create] User: ${userId}`);
 
         // Get user's company membership
         const { data: membership, error: memberError } = await supabase
@@ -89,11 +124,13 @@ router.post('/', [auth, upload.single('image')], async (req, res) => {
         if (membership.role !== 'admin' && membership.role !== 'owner') {
             return res.status(403).json({ message: 'Access denied. Only Admins/Owners can create projects.' });
         }
+        
+        const targetCompanyId = membership.company_id;
 
         // Handle image upload if present
         let imageUrl = null;
         if (req.file) {
-            const fileName = `${membership.company_id}/${Date.now()}_${path.basename(req.file.originalname)}`;
+            const fileName = `${targetCompanyId}/${Date.now()}_${path.basename(req.file.originalname)}`;
             const { data: uploadData, error: uploadError } = await supabase
                 .storage
                 .from('project-images')
@@ -103,7 +140,6 @@ router.post('/', [auth, upload.single('image')], async (req, res) => {
 
             if (uploadError) {
                 console.error('Image upload error:', uploadError);
-                // Continue without image
             } else {
                 const { data: { publicUrl } } = supabase
                     .storage
@@ -116,7 +152,75 @@ router.post('/', [auth, upload.single('image')], async (req, res) => {
         const { data: project, error } = await supabase
             .from('projects')
             .insert({
-                company_id: membership.company_id,
+                company_id: targetCompanyId,
+                name,
+                description,
+                status: status || 'upcoming',
+                location,
+                client,
+                deadline,
+                image_url: imageUrl,
+                created_by: userId
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        res.status(201).json(project);
+    } catch (err) {
+        console.error('Error creating project:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Create new project (Owner/Super Admin only - in any company)
+router.post('/createOwner', [auth, upload.single('image')], async (req, res) => {
+    try {
+        const supabase = req.supabase;
+        const userId = req.user.id;
+        const userRole = req.user.role;
+        const { name, description, status, location, client, deadline, company_id } = req.body;
+
+        console.log(`[POST /createOwner] User: ${userId}, Role: ${userRole}`);
+
+        // 1. Owner (Super Admin) check
+        if (userRole !== 'owner') {
+             return res.status(403).json({ message: 'Access denied. Only System Owners can use this API.' });
+        }
+
+        if (!company_id) {
+            return res.status(400).json({ message: 'Owner must provide company_id to create a project' });
+        }
+        
+        const targetCompanyId = company_id;
+
+        // Handle image upload if present
+        let imageUrl = null;
+        if (req.file) {
+            const fileName = `${targetCompanyId}/${Date.now()}_${path.basename(req.file.originalname)}`;
+            const { data: uploadData, error: uploadError } = await supabase
+                .storage
+                .from('project-images')
+                .upload(fileName, req.file.buffer, {
+                    contentType: req.file.mimetype
+                });
+
+            if (uploadError) {
+                console.error('Image upload error:', uploadError);
+            } else {
+                const { data: { publicUrl } } = supabase
+                    .storage
+                    .from('project-images')
+                    .getPublicUrl(fileName);
+                imageUrl = publicUrl;
+            }
+        }
+
+        const { data: project, error } = await supabase
+            .from('projects')
+            .insert({
+                company_id: targetCompanyId,
                 name,
                 description,
                 status: status || 'upcoming',

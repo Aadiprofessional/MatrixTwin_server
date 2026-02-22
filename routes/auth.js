@@ -34,21 +34,23 @@ setInterval(() => {
 
 // Development-only route for getting test tokens
 if (process.env.NODE_ENV === 'development') {
-  router.get('/dev-token/:role', (req, res) => {
-    const { role } = req.params;
-    const validRoles = ['admin', 'projectManager', 'siteInspector', 'contractor', 'worker'];
+  router.get('/dev-token/:role/:id?', (req, res) => {
+    const { role, id } = req.params;
+    const validRoles = ['admin', 'projectManager', 'siteInspector', 'contractor', 'worker', 'owner', 'member'];
     
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Invalid role' });
     }
     
+    const userId = id || 'test-user-id';
+    
     const token = jwt.sign(
-      { id: 'test-user-id', role },
+      { id: userId, role },
       process.env.JWT_SECRET || 'jwtsecrettoken',
       { expiresIn: '1d' }
     );
     
-    res.json({ token });
+    res.json({ token, userId, role });
   });
 }
 

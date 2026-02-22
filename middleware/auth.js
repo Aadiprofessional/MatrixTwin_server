@@ -11,7 +11,7 @@ const auth = (req, res, next) => {
   // Skip auth in development mode with dev-skip-auth header
   if (process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true') {
     req.user = {
-      id: 'dev-user-id',
+      id: req.headers['dev-user-id'] || 'dev-user-id',
       role: req.headers['dev-role'] || 'admin'
     };
     console.log('Auth bypassed in development mode:', req.user);

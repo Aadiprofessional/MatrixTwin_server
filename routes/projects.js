@@ -31,74 +31,95 @@ router.get('/list', auth, async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
-        
-        console.log(`[GET /list] User: ${userId}`);
+        const userRole = req.user.role; // Role from JWT
 
-        // 1. Fetch user role and company_id from users table
-        let user = null;
-        const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('role, company_id')
-            .eq('id', userId)
+        console.log(`[GET /list] User: ${userId}, Role: ${userRole}`);
+
+        // 1. Owner (Super Admin) - View ALL projects
+        if (userRole === 'owner') {
+            console.log('User is owner, fetching all projects via RPC');
+            // Use RPC to bypass RLS recursion
+            const { data: projects, error } = await supabase
+                .rpc('get_all_projects_owner');
+
+            if (error) {
+                console.error('RPC get_all_projects_owner failed:', error);
+                // Fallback to normal query if RPC doesn't exist (though RLS might fail)
+                const { data: projectsFallback, error: errorFallback } = await supabase
+                    .from('projects')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (errorFallback) throw errorFallback;
+                return res.json(projectsFallback);
+            }
+            return res.json(projects);
+        }
+
+        // 2. Get user's company membership for Admin/Member
+        const { data: membership, error: memberError } = await supabase
+            .from('company_members')
+            .select('company_id, role')
+            .eq('user_id', userId)
             .single();
 
-        if (userError || !userData) {
-            console.error('Error fetching user data:', userError);
-            // Dev mode fallback
-            if (process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true') {
-                 console.log('Dev mode: User not found in DB, using headers');
-                 user = {
-                     role: req.headers['dev-role'] || 'admin',
-                     company_id: req.headers['dev-company-id']
-                 };
-            } else {
-                 return res.status(404).json({ message: 'User not found' });
-            }
-        } else {
-            user = userData;
+        if (memberError || !membership) {
+            console.log('User has no company membership');
+            return res.status(404).json({ message: 'User does not belong to any company' });
         }
-
-        const { role, company_id } = user;
-        console.log(`User fetched: Role=${role}, Company=${company_id}`);
-
-        // 2. Owner (Super Admin) - View ALL projects
-        if (role === 'owner') {
-            const { data: projects, error } = await supabase
-                .from('projects')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            if (error) throw error;
-            return res.json(projects);
-        }
-
-        if (!company_id) {
-            return res.status(400).json({ message: 'User does not belong to any company' });
-        }
+        
+        console.log(`User company membership: ${JSON.stringify(membership)}`);
 
         // 3. Admin - View all company projects
-        if (role === 'admin') {
+        if (membership.role === 'admin' || membership.role === 'owner') {
+            console.log('User is admin/company-owner, fetching company projects via RPC');
+            
+            // Try RPC first
             const { data: projects, error } = await supabase
-                .from('projects')
-                .select('*, members:project_members(user_id, role)')
-                .eq('company_id', company_id)
-                .order('created_at', { ascending: false });
+                .rpc('get_company_projects', { p_company_id: membership.company_id });
 
-            if (error) throw error;
+            if (error) {
+                console.error('RPC get_company_projects failed, falling back to RLS:', error);
+                const { data: projectsFallback, error: errorFallback } = await supabase
+                    .from('projects')
+                    .select('*, members:project_members(user_id, role)')
+                    .eq('company_id', membership.company_id)
+                    .order('created_at', { ascending: false });
+
+                if (errorFallback) throw errorFallback;
+                return res.json(projectsFallback);
+            }
             return res.json(projects);
         }
 
-        // 4. User (Member) - View only assigned projects
-        // We join with project_members to filter
-        const { data: projects, error } = await supabase
-            .from('projects')
-            .select('*, members:project_members!inner(user_id, role)')
-            .eq('company_id', company_id)
-            .eq('members.user_id', userId)
-            .order('created_at', { ascending: false });
+        // 4. Member - View only assigned projects
+        if (membership.role === 'member') {
+            console.log('User is member, fetching assigned projects via RPC');
+            
+            // Try RPC first
+            const { data: projects, error } = await supabase
+                .rpc('get_member_projects', { 
+                    p_user_id: userId, 
+                    p_company_id: membership.company_id 
+                });
 
-        if (error) throw error;
-        return res.json(projects);
+            if (error) {
+                console.error('RPC get_member_projects failed, falling back to RLS:', error);
+                const { data: projectsFallback, error: errorFallback } = await supabase
+                    .from('projects')
+                    .select('*, members:project_members!inner(user_id, role)')
+                    .eq('company_id', membership.company_id)
+                    .eq('members.user_id', userId)
+                    .order('created_at', { ascending: false });
+
+                if (errorFallback) throw errorFallback;
+                return res.json(projectsFallback);
+            }
+            return res.json(projects);
+        }
+
+        // Default: Access denied if role not recognized
+        return res.status(403).json({ message: 'Access denied' });
 
     } catch (err) {
         console.error('Error fetching projects:', err);
@@ -111,62 +132,27 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
+        // const userRole = req.user.role; // Not relying on global role for this, checking company role
         const { name, description, status, location, client, deadline, image } = req.body;
 
         console.log(`[POST /create] User: ${userId}`);
 
-        // 1. Fetch user role and company_id from users table
-        let user = null;
-        const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('role, company_id')
-            .eq('id', userId)
+        // Get user's company membership
+        const { data: membership, error: memberError } = await supabase
+            .from('company_members')
+            .select('company_id, role')
+            .eq('user_id', userId)
             .single();
 
-        if (userError || !userData) {
-             console.error('Error fetching user data:', userError);
-             // Dev mode fallback: if user not found in DB, construct from headers
-             if (process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true') {
-                 console.log('Dev mode: User not found in DB, using headers');
-                 user = {
-                     role: req.headers['dev-role'] || 'admin',
-                     company_id: req.headers['dev-company-id']
-                 };
-             } else {
-                 return res.status(404).json({ message: 'User not found' });
-             }
-        } else {
-            user = userData;
+        if (memberError || !membership) {
+            return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
         }
 
-        const { role, company_id } = user;
-        let targetCompanyId = company_id;
-
-        console.log(`User fetched: Role=${role}, Company=${company_id}`);
-
-        // Dev mode fallback for testing
-        if (!targetCompanyId && process.env.NODE_ENV === 'development' && req.headers['dev-company-id']) {
-            targetCompanyId = req.headers['dev-company-id'];
-            console.log('Dev mode: Using company_id from header:', targetCompanyId);
+        if (membership.role !== 'admin' && membership.role !== 'owner') {
+            return res.status(403).json({ message: 'Access denied. Only Admins/Owners can create projects.' });
         }
-
-        // 2. Permission Check
-        if (role === 'owner') {
-             // Owner can create project, but needs a company_id
-             // If not in user record, check if they passed it? 
-             // For now, assume owner must have company_id or use createOwner endpoint
-             if (!targetCompanyId) {
-                 return res.status(400).json({ message: 'Owner must belong to a company to create a project here. Use /createOwner for other companies.' });
-             }
-        } else if (role === 'admin') {
-             // Admin must have company_id
-             if (!targetCompanyId) {
-                 return res.status(403).json({ message: 'Access denied. Admin must belong to a company.' });
-             }
-        } else {
-             // Regular user cannot create projects
-             return res.status(403).json({ message: 'Access denied. Only Admins can create projects.' });
-        }
+        
+        const targetCompanyId = membership.company_id;
 
         // Handle image upload if present
         let imageUrl = image || null;
@@ -197,9 +183,9 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
                 p_name: name,
                 p_description: description,
                 p_status: status || 'upcoming',
-                p_location: location || null,
-                p_client: client || null,
-                p_deadline: deadline || null,
+                p_location: location,
+                p_client: client,
+                p_deadline: deadline,
                 p_image_url: imageUrl,
                 p_created_by: userId
             })
@@ -207,7 +193,7 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
 
         if (error) {
              console.error('RPC create_project_rpc failed:', error);
-             // Fallback to normal insert if RPC fails
+             // Fallback to normal insert if RPC fails (though likely RLS will block it)
              const { data: projectFallback, error: errorFallback } = await supabase
                 .from('projects')
                 .insert({

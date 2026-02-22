@@ -406,17 +406,7 @@ router.get('/me', auth, async (req, res) => {
     const { supabase } = req;
     
     // Get user data from Supabase Auth
-    let authUser = { user: null };
-    let authError = null;
-
-    // Skip auth check if in dev mode with skip header
-    if (process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true') {
-        authUser.user = { id: req.user.id };
-    } else {
-        const result = await supabase.auth.getUser();
-        authUser = result.data;
-        authError = result.error;
-    }
+    const { data: authUser, error: authError } = await supabase.auth.getUser();
     
     if (authError || !authUser.user) {
       return res.status(404).json({ message: 'User not found' });
@@ -425,7 +415,7 @@ router.get('/me', auth, async (req, res) => {
     // Get additional user data from users table
     const { data: userData, error: userError } = await supabase
       .from('users')
-      .select('id, name, email, role, avatar, company_id')
+      .select('id, name, email, role, avatar')
       .eq('id', req.user.id)
       .single();
       
@@ -466,20 +456,13 @@ router.post('/logout', auth, async (req, res) => {
  * @desc    Get all users (Admin only)
  * @access  Private/Admin
  */
-router.get('/users', [auth], async (req, res) => {
+router.get('/users', [auth, adminOnly], async (req, res) => {
   try {
     const { supabase } = req;
     
-    // In dev mode with bypass, skip admin check
-    if (!(process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true')) {
-        if (req.user.role !== 'admin' && req.user.role !== 'owner') {
-             return res.status(403).json({ message: 'Access denied. Admin only.' });
-        }
-    }
-    
     const { data: users, error } = await supabase
       .from('users')
-      .select('id, name, email, role, avatar, company_id')
+      .select('id, name, email, role, avatar')
       .order('created_at', { ascending: false });
 
     if (error) throw error;

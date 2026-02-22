@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+const { createSupabaseClient } = require('../supabase-client');
 const { auth } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 
@@ -151,15 +153,39 @@ router.get('/requests', auth, async (req, res) => {
 
         if (error) throw error;
 
-        // Use service role client to fetch user data bypassing RLS if necessary, 
-        // or ensure the current user (owner) has permission to view all users.
-        // Assuming req.supabase has owner permissions or we should use a service role client here if RLS blocks it.
-        // For now, let's try to be explicit about the query.
+        // Create a temporary Service Role token using the JWT_SECRET to bypass RLS
+        const serviceRoleToken = jwt.sign(
+            { 
+                role: 'service_role', 
+                iss: 'supabase',
+                iat: Math.floor(Date.now() / 1000),
+                exp: Math.floor(Date.now() / 1000) + (60 * 60) // 1 hour expiration
+            },
+            process.env.JWT_SECRET
+        );
+
+        // Initialize admin client with the service role token
+        const adminClient = createSupabaseClient(
+            process.env.SUPABASE_URL,
+            process.env.SUPABASE_ANON_KEY,
+            {
+                global: {
+                    headers: {
+                        Authorization: `Bearer ${serviceRoleToken}`
+                    }
+                },
+                auth: {
+                    persistSession: false,
+                    autoRefreshToken: false,
+                    detectSessionInUrl: false
+                }
+            }
+        );
         
         const requestsWithUser = await Promise.all(requests.map(async (request) => {
             if (request.user_id) {
-                // Fetch user directly using the ID
-                const { data: userData, error: userError } = await supabase
+                // Fetch user directly using the admin client
+                const { data: userData, error: userError } = await adminClient
                     .from('users')
                     .select(`
                         *,

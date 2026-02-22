@@ -63,7 +63,7 @@ router.get('/my-request', auth, async (req, res) => {
             .from('admin_requests')
             .select('*')
             .eq('user_id', userId)
-            .order('created_at', { ascending: false })
+            .order('requested_at', { ascending: false })
             .limit(1)
             .maybeSingle();
 

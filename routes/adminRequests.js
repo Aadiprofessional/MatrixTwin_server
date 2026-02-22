@@ -1,7 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
-const { createSupabaseClient } = require('../supabase-client');
 const { auth } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 
@@ -153,59 +151,33 @@ router.get('/requests', auth, async (req, res) => {
 
         if (error) throw error;
 
-        // Create a temporary Service Role token using the JWT_SECRET to bypass RLS
-        const serviceRoleToken = jwt.sign(
-            { 
-                role: 'service_role', 
-                iss: 'supabase',
-                iat: Math.floor(Date.now() / 1000),
-                exp: Math.floor(Date.now() / 1000) + (60 * 60) // 1 hour expiration
-            },
-            process.env.JWT_SECRET
-        );
-
-        // Initialize admin client with the service role token
-        const adminClient = createSupabaseClient(
-            process.env.SUPABASE_URL,
-            process.env.SUPABASE_ANON_KEY,
-            {
-                global: {
-                    headers: {
-                        Authorization: `Bearer ${serviceRoleToken}`
-                    }
-                },
-                auth: {
-                    persistSession: false,
-                    autoRefreshToken: false,
-                    detectSessionInUrl: false
-                }
-            }
-        );
-        
         const requestsWithUser = await Promise.all(requests.map(async (request) => {
+            let userData = null;
+            
             if (request.user_id) {
-                // Fetch user directly using the admin client
-                const { data: userData, error: userError } = await adminClient
-                    .from('users')
-                    .select(`
-                        *,
-                        company:companies!users_company_id_fkey(*)
-                    `)
-                    .eq('id', request.user_id)
-                    .single();
-                
-                if (userError) {
-                    console.error(`Error fetching user ${request.user_id}:`, userError);
+                try {
+                    const { data, error: userError } = await supabase
+                        .from('users')
+                        .select(`
+                            *,
+                            company:companies!users_company_id_fkey(*)
+                        `)
+                        .eq('id', request.user_id)
+                        .single();
+                    
+                    if (userError) {
+                        console.error(`Error fetching user ${request.user_id}:`, userError);
+                    } else {
+                        userData = data;
+                    }
+                } catch (e) {
+                    console.error(`Exception fetching user ${request.user_id}:`, e);
                 }
-
-                return {
-                    ...request,
-                    user: userData || null
-                };
             }
+
             return {
                 ...request,
-                user: null
+                user: userData || null
             };
         }));
 

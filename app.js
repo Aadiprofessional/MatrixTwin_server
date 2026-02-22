@@ -27,25 +27,28 @@ const companyRoutes = require('./routes/companies');
 
 const app = express();
 
-// Middleware setup - CORS temporarily disabled for testing
-// app.use(cors({
-//   origin: true,
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-//   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-//   credentials: true
-// }));
+// Middleware setup - CORS configured
+app.use(cors({
+  origin: true, // Reflects the request origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'apikey', 'x-client-info'],
+  credentials: true
+}));
 
-// Manual CORS headers instead
+// Fallback Manual CORS headers (in case cors middleware misses something or for specific serverless environments)
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  // If headers are already sent by cors middleware, don't overwrite
+  if (res.headersSent) return next();
+
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, apikey, x-client-info');
+  res.header('Access-Control-Allow-Credentials', 'true');
   
   if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-  } else {
-    next();
+    return res.sendStatus(200);
   }
+  next();
 });
 
 // Enable express body parsing

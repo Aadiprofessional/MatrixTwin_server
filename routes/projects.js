@@ -196,18 +196,25 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
                     .single();
 
                 if (!userError && userData && userData.company_id) {
-                    // If user has company_id in users table, treat them as a member of that company
-                    // Their role in the company is assumed to be their user role (e.g. 'admin')
-                    membership = {
-                        company_id: userData.company_id,
-                        role: userData.role // 'admin' or 'user'
-                    };
-                }
+                // If user has company_id in users table, treat them as a member of that company
+                // Their role in the company is assumed to be their user role (e.g. 'admin')
+                membership = {
+                    company_id: userData.company_id,
+                    role: userData.role // 'admin' or 'user'
+                };
+            } else if (process.env.NODE_ENV === 'development' && req.headers['dev-company-id']) {
+                 // Dev mode fallback: allow passing company_id via header for testing
+                 membership = {
+                     company_id: req.headers['dev-company-id'],
+                     role: req.headers['dev-role'] || 'admin'
+                 };
+                 console.log('Dev mode: Using company_id from header:', membership);
             }
+        }
 
-            if (!membership) {
-                return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
-            }
+        if (!membership) {
+            return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
+        }
 
             if (membership.role !== 'admin' && membership.role !== 'owner') {
                 return res.status(403).json({ message: 'Access denied. Only Admins/Owners can create projects.' });
@@ -245,9 +252,9 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
                 p_name: name,
                 p_description: description,
                 p_status: status || 'upcoming',
-                p_location: location,
-                p_client: client,
-                p_deadline: deadline,
+                p_location: location || null,
+                p_client: client || null,
+                p_deadline: deadline || null,
                 p_image_url: imageUrl,
                 p_created_by: userId
             })

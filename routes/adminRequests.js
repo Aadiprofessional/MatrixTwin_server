@@ -151,15 +151,27 @@ router.get('/requests', auth, async (req, res) => {
 
         if (error) throw error;
 
-        // Manually fetch user details for each request to avoid complex join issues
+        // Use service role client to fetch user data bypassing RLS if necessary, 
+        // or ensure the current user (owner) has permission to view all users.
+        // Assuming req.supabase has owner permissions or we should use a service role client here if RLS blocks it.
+        // For now, let's try to be explicit about the query.
+        
         const requestsWithUser = await Promise.all(requests.map(async (request) => {
             if (request.user_id) {
-                const { data: userData } = await supabase
+                // Fetch user directly using the ID
+                const { data: userData, error: userError } = await supabase
                     .from('users')
-                    .select('*, company:companies(*)')
+                    .select(`
+                        *,
+                        company:companies!users_company_id_fkey(*)
+                    `)
                     .eq('id', request.user_id)
                     .single();
                 
+                if (userError) {
+                    console.error(`Error fetching user ${request.user_id}:`, userError);
+                }
+
                 return {
                     ...request,
                     user: userData || null

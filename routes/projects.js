@@ -33,50 +33,56 @@ router.get('/list', auth, async (req, res) => {
 
         console.log(`[GET /list] User: ${userId}`);
 
-        // Fetch user details from public.users table
-        const { data: userRecord, error: userError } = await supabase
-            .from('users')
-            .select('role, company_id')
-            .eq('id', userId)
-            .single();
-
-        if (userError || !userRecord) {
-            console.error('Error fetching user details:', userError);
-            return res.status(404).json({ message: 'User details not found' });
-        }
-
-        const { role, company_id } = userRecord;
-        console.log(`User details - Role: ${role}, Company: ${company_id}`);
-
-        if (!company_id) {
-            return res.status(400).json({ message: 'User is not associated with any company' });
-        }
-
-        let query;
-
-        // Admin sees all projects in the company
-        if (role === 'admin') {
-            query = supabase
-                .from('projects')
-                .select('*, members:project_members(user_id, role)')
-                .eq('company_id', company_id)
-                .order('created_at', { ascending: false });
-        } 
-        // Other users see only assigned projects
-        else {
-            query = supabase
-                .from('projects')
-                .select('*, members:project_members!inner(user_id, role)')
-                .eq('company_id', company_id)
-                .eq('members.user_id', userId)
-                .order('created_at', { ascending: false });
-        }
-
-        const { data: projects, error } = await query;
+        // Use RPC to bypass potential RLS recursion issues
+        const { data: projects, error } = await supabase
+            .rpc('get_user_projects_v2', { p_user_id: userId });
 
         if (error) {
-            console.error('Error fetching projects:', error);
-            return res.status(500).json({ message: 'Error fetching projects' });
+            console.error('RPC get_user_projects_v2 failed:', error);
+            
+            // Fallback to direct query if RPC doesn't exist yet (though likely RLS will block if recursive)
+            // Re-fetch user details for fallback logic
+            const { data: userRecord, error: userError } = await supabase
+                .from('users')
+                .select('role, company_id')
+                .eq('id', userId)
+                .single();
+
+            if (userError || !userRecord) {
+                console.error('Error fetching user details:', userError);
+                return res.status(404).json({ message: 'User details not found' });
+            }
+
+            const { role, company_id } = userRecord;
+            
+            if (!company_id) {
+                return res.status(400).json({ message: 'User is not associated with any company' });
+            }
+
+            let query;
+            if (role === 'admin') {
+                query = supabase
+                    .from('projects')
+                    .select('*, members:project_members(user_id, role)')
+                    .eq('company_id', company_id)
+                    .order('created_at', { ascending: false });
+            } else {
+                query = supabase
+                    .from('projects')
+                    .select('*, members:project_members!inner(user_id, role)')
+                    .eq('company_id', company_id)
+                    .eq('members.user_id', userId)
+                    .order('created_at', { ascending: false });
+            }
+
+            const { data: fallbackProjects, error: fallbackError } = await query;
+            
+            if (fallbackError) {
+                console.error('Fallback query failed:', fallbackError);
+                return res.status(500).json({ message: 'Error fetching projects', details: fallbackError });
+            }
+            
+            return res.json(fallbackProjects);
         }
 
         return res.json(projects);

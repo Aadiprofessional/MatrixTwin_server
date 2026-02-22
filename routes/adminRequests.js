@@ -144,7 +144,6 @@ router.get('/requests', auth, async (req, res) => {
             return res.status(403).json({ message: 'Access denied. Owner only.' });
         }
 
-        // 1. Fetch all requests
         const { data: requests, error } = await supabase
             .from('admin_requests')
             .select('*')
@@ -152,38 +151,27 @@ router.get('/requests', auth, async (req, res) => {
 
         if (error) throw error;
 
-        // 2. Extract unique user IDs
-        const userIds = [...new Set(requests.map(r => r.user_id).filter(Boolean))];
-
-        if (userIds.length > 0) {
-            // 3. Fetch user details manually (to avoid ambiguous join issues)
-            // Note: We use the service role key if available to bypass RLS, 
-            // but here we rely on the owner's permission or just the authenticated client.
-            // If the owner cannot see users due to RLS, this might return empty.
-            // Assuming owner has access.
-            const { data: users, error: usersError } = await supabase
-                .from('users')
-                .select(`
-                    *,
-                    company:companies(*)
-                `)
-                .in('id', userIds);
-
-            if (usersError) {
-                console.error('Error fetching users for admin requests:', usersError);
-                // Continue without user details rather than failing completely
-            } else {
-                // 4. Map users to requests
-                const userMap = {};
-                users.forEach(u => userMap[u.id] = u);
-
-                requests.forEach(r => {
-                    r.user = userMap[r.user_id] || null;
-                });
+        // Manually fetch user details for each request to avoid complex join issues
+        const requestsWithUser = await Promise.all(requests.map(async (request) => {
+            if (request.user_id) {
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('*, company:companies(*)')
+                    .eq('id', request.user_id)
+                    .single();
+                
+                return {
+                    ...request,
+                    user: userData || null
+                };
             }
-        }
+            return {
+                ...request,
+                user: null
+            };
+        }));
 
-        res.json(requests);
+        res.json(requestsWithUser);
     } catch (err) {
         console.error('Error listing requests:', err);
         res.status(500).json({ message: 'Server error' });

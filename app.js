@@ -24,6 +24,7 @@ const inspectionRoutes = require('./routes/inspection');
 const surveyRoutes = require('./routes/survey');
 const adminRoutes = require('./routes/admin');
 const companyRoutes = require('./routes/companies');
+const adminRequestRoutes = require('./routes/adminRequests');
 
 const app = express();
 
@@ -119,6 +120,7 @@ app.use('/api/test', testRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/companies', companyRoutes);
+app.use('/api/admin-requests', adminRequestRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/custom-forms', customFormRoutes);

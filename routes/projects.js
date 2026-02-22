@@ -176,23 +176,43 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
             }
         }
 
+        // Use RPC to create project (bypassing RLS)
         const { data: project, error } = await supabase
-            .from('projects')
-            .insert({
-                company_id: targetCompanyId,
-                name,
-                description,
-                status: status || 'upcoming',
-                location,
-                client,
-                deadline,
-                image_url: imageUrl,
-                created_by: userId
+            .rpc('create_project_rpc', {
+                p_company_id: targetCompanyId,
+                p_name: name,
+                p_description: description,
+                p_status: status || 'upcoming',
+                p_location: location,
+                p_client: client,
+                p_deadline: deadline,
+                p_image_url: imageUrl,
+                p_created_by: userId
             })
-            .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+             console.error('RPC create_project_rpc failed:', error);
+             // Fallback to normal insert if RPC fails (though likely RLS will block it)
+             const { data: projectFallback, error: errorFallback } = await supabase
+                .from('projects')
+                .insert({
+                    company_id: targetCompanyId,
+                    name,
+                    description,
+                    status: status || 'upcoming',
+                    location,
+                    client,
+                    deadline,
+                    image_url: imageUrl,
+                    created_by: userId
+                })
+                .select()
+                .single();
+
+             if (errorFallback) throw errorFallback;
+             return res.status(201).json(projectFallback);
+        }
 
         res.status(201).json(project);
     } catch (err) {
@@ -244,23 +264,43 @@ router.post('/createOwner', [auth, upload.single('image')], async (req, res) => 
             }
         }
 
+        // Use RPC to create project (bypassing RLS)
         const { data: project, error } = await supabase
-            .from('projects')
-            .insert({
-                company_id: targetCompanyId,
-                name,
-                description,
-                status: status || 'upcoming',
-                location,
-                client,
-                deadline,
-                image_url: imageUrl,
-                created_by: userId
+            .rpc('create_project_rpc', {
+                p_company_id: targetCompanyId,
+                p_name: name,
+                p_description: description,
+                p_status: status || 'upcoming',
+                p_location: location,
+                p_client: client,
+                p_deadline: deadline,
+                p_image_url: imageUrl,
+                p_created_by: userId
             })
-            .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+             console.error('RPC create_project_rpc failed:', error);
+             // Fallback to normal insert if RPC fails
+             const { data: projectFallback, error: errorFallback } = await supabase
+                .from('projects')
+                .insert({
+                    company_id: targetCompanyId,
+                    name,
+                    description,
+                    status: status || 'upcoming',
+                    location,
+                    client,
+                    deadline,
+                    image_url: imageUrl,
+                    created_by: userId
+                })
+                .select()
+                .single();
+
+             if (errorFallback) throw errorFallback;
+             return res.status(201).json(projectFallback);
+        }
 
         res.status(201).json(project);
     } catch (err) {

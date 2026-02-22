@@ -35,15 +35,27 @@ router.get('/list', auth, async (req, res) => {
         console.log(`[GET /list] User: ${userId}`);
 
         // 1. Fetch user role and company_id from users table
-        const { data: user, error: userError } = await supabase
+        let user = null;
+        const { data: userData, error: userError } = await supabase
             .from('users')
             .select('role, company_id')
             .eq('id', userId)
             .single();
 
-        if (userError || !user) {
+        if (userError || !userData) {
             console.error('Error fetching user data:', userError);
-            return res.status(404).json({ message: 'User not found' });
+            // Dev mode fallback
+            if (process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true') {
+                 console.log('Dev mode: User not found in DB, using headers');
+                 user = {
+                     role: req.headers['dev-role'] || 'admin',
+                     company_id: req.headers['dev-company-id']
+                 };
+            } else {
+                 return res.status(404).json({ message: 'User not found' });
+            }
+        } else {
+            user = userData;
         }
 
         const { role, company_id } = user;
@@ -104,15 +116,27 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
         console.log(`[POST /create] User: ${userId}`);
 
         // 1. Fetch user role and company_id from users table
-        const { data: user, error: userError } = await supabase
+        let user = null;
+        const { data: userData, error: userError } = await supabase
             .from('users')
             .select('role, company_id')
             .eq('id', userId)
             .single();
 
-        if (userError || !user) {
+        if (userError || !userData) {
              console.error('Error fetching user data:', userError);
-             return res.status(404).json({ message: 'User not found' });
+             // Dev mode fallback: if user not found in DB, construct from headers
+             if (process.env.NODE_ENV === 'development' && req.headers['dev-skip-auth'] === 'true') {
+                 console.log('Dev mode: User not found in DB, using headers');
+                 user = {
+                     role: req.headers['dev-role'] || 'admin',
+                     company_id: req.headers['dev-company-id']
+                 };
+             } else {
+                 return res.status(404).json({ message: 'User not found' });
+             }
+        } else {
+            user = userData;
         }
 
         const { role, company_id } = user;

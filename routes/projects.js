@@ -176,13 +176,36 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
         } else {
             // Regular Admin check
             // Get user's company membership
-            const { data: membership, error: memberError } = await supabase
+            let membership = null;
+
+            // 1. Try fetching from company_members
+            const { data: memberData, error: memberError } = await supabase
                 .from('company_members')
                 .select('company_id, role')
                 .eq('user_id', userId)
                 .single();
+            
+            if (!memberError && memberData) {
+                membership = memberData;
+            } else {
+                // 2. Fallback: Check users table for company_id (especially for new admins)
+                const { data: userData, error: userError } = await supabase
+                    .from('users')
+                    .select('company_id, role')
+                    .eq('id', userId)
+                    .single();
 
-            if (memberError || !membership) {
+                if (!userError && userData && userData.company_id) {
+                    // If user has company_id in users table, treat them as a member of that company
+                    // Their role in the company is assumed to be their user role (e.g. 'admin')
+                    membership = {
+                        company_id: userData.company_id,
+                        role: userData.role // 'admin' or 'user'
+                    };
+                }
+            }
+
+            if (!membership) {
                 return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
             }
 

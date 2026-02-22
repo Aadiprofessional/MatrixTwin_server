@@ -133,7 +133,7 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
         const supabase = req.supabase;
         const userId = req.user.id;
         // const userRole = req.user.role; // Not relying on global role for this, checking company role
-        const { name, description, status, location, client, deadline } = req.body;
+        const { name, description, status, location, client, deadline, image } = req.body;
 
         console.log(`[POST /create] User: ${userId}`);
 
@@ -155,7 +155,7 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
         const targetCompanyId = membership.company_id;
 
         // Handle image upload if present
-        let imageUrl = null;
+        let imageUrl = image || null;
         if (req.file) {
             const fileName = `${targetCompanyId}/${Date.now()}_${path.basename(req.file.originalname)}`;
             const { data: uploadData, error: uploadError } = await supabase
@@ -227,7 +227,7 @@ router.post('/createOwner', [auth, upload.single('image')], async (req, res) => 
         const supabase = req.supabase;
         const userId = req.user.id;
         const userRole = req.user.role;
-        const { name, description, status, location, client, deadline, company_id } = req.body;
+        const { name, description, status, location, client, deadline, company_id, image } = req.body;
 
         console.log(`[POST /createOwner] User: ${userId}, Role: ${userRole}`);
 
@@ -243,7 +243,7 @@ router.post('/createOwner', [auth, upload.single('image')], async (req, res) => 
         const targetCompanyId = company_id;
 
         // Handle image upload if present
-        let imageUrl = null;
+        let imageUrl = image || null;
         if (req.file) {
             const fileName = `${targetCompanyId}/${Date.now()}_${path.basename(req.file.originalname)}`;
             const { data: uploadData, error: uploadError } = await supabase

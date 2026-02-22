@@ -144,18 +144,44 @@ router.get('/requests', auth, async (req, res) => {
             return res.status(403).json({ message: 'Access denied. Owner only.' });
         }
 
+        // 1. Fetch all requests
         const { data: requests, error } = await supabase
             .from('admin_requests')
-            .select(`
-                *,
-                user:users!admin_requests_user_id_fkey(
-                    *,
-                    company:companies!users_company_id_fkey(*)
-                )
-            `)
+            .select('*')
             .order('requested_at', { ascending: false });
 
         if (error) throw error;
+
+        // 2. Extract unique user IDs
+        const userIds = [...new Set(requests.map(r => r.user_id).filter(Boolean))];
+
+        if (userIds.length > 0) {
+            // 3. Fetch user details manually (to avoid ambiguous join issues)
+            // Note: We use the service role key if available to bypass RLS, 
+            // but here we rely on the owner's permission or just the authenticated client.
+            // If the owner cannot see users due to RLS, this might return empty.
+            // Assuming owner has access.
+            const { data: users, error: usersError } = await supabase
+                .from('users')
+                .select(`
+                    *,
+                    company:companies(*)
+                `)
+                .in('id', userIds);
+
+            if (usersError) {
+                console.error('Error fetching users for admin requests:', usersError);
+                // Continue without user details rather than failing completely
+            } else {
+                // 4. Map users to requests
+                const userMap = {};
+                users.forEach(u => userMap[u.id] = u);
+
+                requests.forEach(r => {
+                    r.user = userMap[r.user_id] || null;
+                });
+            }
+        }
 
         res.json(requests);
     } catch (err) {

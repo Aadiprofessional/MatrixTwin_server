@@ -24,67 +24,68 @@ const upload = multer({
 });
 
 // Get all projects
+// Owner: List all projects
 // Admin: List all projects for the company
-// User: List only assigned projects
+// Member: List only assigned projects
 router.get('/list', auth, async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
-
+        
         console.log(`[GET /list] User: ${userId}`);
 
-        // Use RPC to bypass potential RLS recursion issues
-        const { data: projects, error } = await supabase
-            .rpc('get_user_projects_v2', { p_user_id: userId });
+        // 1. Fetch user role and company_id from users table
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('role, company_id')
+            .eq('id', userId)
+            .single();
 
-        if (error) {
-            console.error('RPC get_user_projects_v2 failed:', error);
-            
-            // Fallback to direct query if RPC doesn't exist yet (though likely RLS will block if recursive)
-            // Re-fetch user details for fallback logic
-            const { data: userRecord, error: userError } = await supabase
-                .from('users')
-                .select('role, company_id')
-                .eq('id', userId)
-                .single();
-
-            if (userError || !userRecord) {
-                console.error('Error fetching user details:', userError);
-                return res.status(404).json({ message: 'User details not found' });
-            }
-
-            const { role, company_id } = userRecord;
-            
-            if (!company_id) {
-                return res.status(400).json({ message: 'User is not associated with any company' });
-            }
-
-            let query;
-            if (role === 'admin') {
-                query = supabase
-                    .from('projects')
-                    .select('*, members:project_members(user_id, role)')
-                    .eq('company_id', company_id)
-                    .order('created_at', { ascending: false });
-            } else {
-                query = supabase
-                    .from('projects')
-                    .select('*, members:project_members!inner(user_id, role)')
-                    .eq('company_id', company_id)
-                    .eq('members.user_id', userId)
-                    .order('created_at', { ascending: false });
-            }
-
-            const { data: fallbackProjects, error: fallbackError } = await query;
-            
-            if (fallbackError) {
-                console.error('Fallback query failed:', fallbackError);
-                return res.status(500).json({ message: 'Error fetching projects', details: fallbackError });
-            }
-            
-            return res.json(fallbackProjects);
+        if (userError || !user) {
+            console.error('Error fetching user data:', userError);
+            return res.status(404).json({ message: 'User not found' });
         }
 
+        const { role, company_id } = user;
+        console.log(`User fetched: Role=${role}, Company=${company_id}`);
+
+        // 2. Owner (Super Admin) - View ALL projects
+        if (role === 'owner') {
+            const { data: projects, error } = await supabase
+                .from('projects')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            return res.json(projects);
+        }
+
+        if (!company_id) {
+            return res.status(400).json({ message: 'User does not belong to any company' });
+        }
+
+        // 3. Admin - View all company projects
+        if (role === 'admin') {
+            const { data: projects, error } = await supabase
+                .from('projects')
+                .select('*, members:project_members(user_id, role)')
+                .eq('company_id', company_id)
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            return res.json(projects);
+        }
+
+        // 4. User (Member) - View only assigned projects
+        // We join with project_members to filter
+        const { data: projects, error } = await supabase
+            .from('projects')
+            .select('*, members:project_members!inner(user_id, role)')
+            .eq('company_id', company_id)
+            .eq('members.user_id', userId)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
         return res.json(projects);
 
     } catch (err) {
@@ -93,48 +94,67 @@ router.get('/list', auth, async (req, res) => {
     }
 });
 
-// Create new project
+// Create new project (Admin only - in their own company)
 router.post('/create', [auth, upload.single('image')], async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
-        const { name, description, status, location, client, deadline } = req.body;
+        const { name, description, status, location, client, deadline, image } = req.body;
 
         console.log(`[POST /create] User: ${userId}`);
 
-        // Fetch user details from public.users table
-        const { data: userRecord, error: userError } = await supabase
+        // 1. Fetch user role and company_id from users table
+        const { data: user, error: userError } = await supabase
             .from('users')
             .select('role, company_id')
             .eq('id', userId)
             .single();
 
-        if (userError || !userRecord) {
-            return res.status(404).json({ message: 'User details not found' });
+        if (userError || !user) {
+             console.error('Error fetching user data:', userError);
+             return res.status(404).json({ message: 'User not found' });
         }
 
-        const { role, company_id } = userRecord;
+        const { role, company_id } = user;
+        let targetCompanyId = company_id;
 
-        // Only admins can create projects
-        if (role !== 'admin') {
-            return res.status(403).json({ message: 'Access denied. Only admins can create projects.' });
+        console.log(`User fetched: Role=${role}, Company=${company_id}`);
+
+        // Dev mode fallback for testing
+        if (!targetCompanyId && process.env.NODE_ENV === 'development' && req.headers['dev-company-id']) {
+            targetCompanyId = req.headers['dev-company-id'];
+            console.log('Dev mode: Using company_id from header:', targetCompanyId);
         }
 
-        if (!company_id) {
-            return res.status(400).json({ message: 'User is not associated with any company' });
+        // 2. Permission Check
+        if (role === 'owner') {
+             // Owner can create project, but needs a company_id
+             // If not in user record, check if they passed it? 
+             // For now, assume owner must have company_id or use createOwner endpoint
+             if (!targetCompanyId) {
+                 return res.status(400).json({ message: 'Owner must belong to a company to create a project here. Use /createOwner for other companies.' });
+             }
+        } else if (role === 'admin') {
+             // Admin must have company_id
+             if (!targetCompanyId) {
+                 return res.status(403).json({ message: 'Access denied. Admin must belong to a company.' });
+             }
+        } else {
+             // Regular user cannot create projects
+             return res.status(403).json({ message: 'Access denied. Only Admins can create projects.' });
         }
 
         // Handle image upload if present
-        let imageUrl = null;
+        let imageUrl = image || null;
         if (req.file) {
-            const fileName = `${company_id}/${Date.now()}_${path.basename(req.file.originalname)}`;
-            const { error: uploadError } = await supabase
+            const fileName = `${targetCompanyId}/${Date.now()}_${path.basename(req.file.originalname)}`;
+            const { data: uploadData, error: uploadError } = await supabase
                 .storage
                 .from('project-images')
                 .upload(fileName, req.file.buffer, {
                     contentType: req.file.mimetype
                 });
-            
+
             if (uploadError) {
                 console.error('Image upload error:', uploadError);
             } else {
@@ -146,32 +166,47 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
             }
         }
 
-        // Create project
+        // Use RPC to create project (bypassing RLS)
         const { data: project, error } = await supabase
-            .from('projects')
-            .insert({
-                company_id: company_id,
-                name,
-                description,
-                status: status || 'upcoming',
-                location,
-                client,
-                deadline,
-                image_url: imageUrl,
-                created_by: userId
+            .rpc('create_project_rpc', {
+                p_company_id: targetCompanyId,
+                p_name: name,
+                p_description: description,
+                p_status: status || 'upcoming',
+                p_location: location || null,
+                p_client: client || null,
+                p_deadline: deadline || null,
+                p_image_url: imageUrl,
+                p_created_by: userId
             })
-            .select()
             .single();
 
         if (error) {
-            console.error('Error creating project:', error);
-            return res.status(500).json({ message: 'Error creating project' });
+             console.error('RPC create_project_rpc failed:', error);
+             // Fallback to normal insert if RPC fails
+             const { data: projectFallback, error: errorFallback } = await supabase
+                .from('projects')
+                .insert({
+                    company_id: targetCompanyId,
+                    name,
+                    description,
+                    status: status || 'upcoming',
+                    location,
+                    client,
+                    deadline,
+                    image_url: imageUrl,
+                    created_by: userId
+                })
+                .select()
+                .single();
+
+             if (errorFallback) throw errorFallback;
+             return res.status(201).json(projectFallback);
         }
 
         res.status(201).json(project);
-
     } catch (err) {
-        console.error('Error in /create:', err);
+        console.error('Error creating project:', err);
         res.status(500).json({ message: 'Server error' });
     }
 });

@@ -148,7 +148,10 @@ router.get('/requests', auth, async (req, res) => {
             .from('admin_requests')
             .select(`
                 *,
-                user:users(id, name, email)
+                user:users!admin_requests_user_id_fkey(
+                    *,
+                    company:companies(*)
+                )
             `)
             .order('requested_at', { ascending: false });
 

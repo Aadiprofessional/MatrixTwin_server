@@ -150,7 +150,7 @@ router.get('/requests', auth, async (req, res) => {
                 *,
                 user:users!admin_requests_user_id_fkey(
                     *,
-                    company:companies(*)
+                    company:companies!users_company_id_fkey(*)
                 )
             `)
             .order('requested_at', { ascending: false });

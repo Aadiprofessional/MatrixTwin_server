@@ -314,45 +314,53 @@ router.put('/:id', [auth, upload.single('image')], async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
+        const userRole = req.user.role;
         const projectId = req.params.id;
-        const { name, description, status, location, client, deadline } = req.body;
+        const { name, description, status, location, client, deadline, image } = req.body;
 
-        // Check permission via RLS or explicit check
-        const { data: membership, error: memberError } = await supabase
-            .from('company_members')
-            .select('company_id, role')
-            .eq('user_id', userId)
+        console.log(`[PUT /:id] User: ${userId}, Role: ${userRole}, Project: ${projectId}`);
+
+        // 1. Fetch project details to check ownership (via RPC to bypass RLS)
+        const { data: project, error: fetchError } = await supabase
+            .rpc('get_project_by_id', { p_id: projectId })
             .single();
 
-        if (memberError || !membership || (membership.role !== 'admin' && membership.role !== 'owner')) {
-            return res.status(403).json({ message: 'Access denied.' });
+        if (fetchError || !project) {
+            console.error('Project not found or RPC error:', fetchError);
+            return res.status(404).json({ message: 'Project not found' });
         }
 
-        // Verify project belongs to user's company
-        const { data: projectCheck, error: checkError } = await supabase
-            .from('projects')
-            .select('id')
-            .eq('id', projectId)
-            .eq('company_id', membership.company_id)
-            .single();
+        // 2. Permission Check
+        let isAuthorized = false;
 
-        if (checkError || !projectCheck) {
-            return res.status(404).json({ message: 'Project not found or access denied' });
+        // Owner: Can update ANY project
+        if (userRole === 'owner') {
+            isAuthorized = true;
+        } else {
+            // Admin: Must belong to same company
+            const { data: membership, error: memberError } = await supabase
+                .from('company_members')
+                .select('company_id, role')
+                .eq('user_id', userId)
+                .single();
+
+            if (!memberError && membership && (membership.role === 'admin' || membership.role === 'owner')) {
+                if (membership.company_id === project.company_id) {
+                    isAuthorized = true;
+                }
+            }
         }
 
-        const updates = {
-            name,
-            description,
-            status,
-            location,
-            client,
-            deadline,
-            updated_at: new Date()
-        };
+        if (!isAuthorized) {
+            return res.status(403).json({ message: 'Access denied. You do not have permission to update this project.' });
+        }
 
-        // Handle image update
+        // 3. Prepare updates
+        let imageUrl = image || project.image_url;
+        
+        // Handle new image upload
         if (req.file) {
-            const fileName = `${membership.company_id}/${Date.now()}_${path.basename(req.file.originalname)}`;
+            const fileName = `${project.company_id}/${Date.now()}_${path.basename(req.file.originalname)}`;
             const { error: uploadError } = await supabase
                 .storage
                 .from('project-images')
@@ -361,30 +369,101 @@ router.put('/:id', [auth, upload.single('image')], async (req, res) => {
                     upsert: true
                 });
 
-            if (!uploadError) {
+            if (uploadError) {
+                console.error('Image upload error:', uploadError);
+            } else {
                 const { data: { publicUrl } } = supabase
                     .storage
                     .from('project-images')
                     .getPublicUrl(fileName);
-                updates.image_url = publicUrl;
+                imageUrl = publicUrl;
             }
         }
 
-        // Filter out undefined values
-        Object.keys(updates).forEach(key => updates[key] === undefined && delete updates[key]);
-
-        const { data: updatedProject, error } = await supabase
-            .from('projects')
-            .update(updates)
-            .eq('id', projectId)
-            .select()
+        // 4. Update via RPC (bypassing RLS)
+        // Pass existing values if new ones are undefined/null
+        const { data: updatedProject, error: updateError } = await supabase
+            .rpc('update_project_rpc', {
+                p_id: projectId,
+                p_name: name || project.name,
+                p_description: description || project.description,
+                p_status: status || project.status,
+                p_location: location || project.location,
+                p_client: client || project.client,
+                p_deadline: deadline || project.deadline,
+                p_image_url: imageUrl
+            })
             .single();
 
-        if (error) throw error;
+        if (updateError) {
+            console.error('RPC update_project_rpc failed:', updateError);
+            throw updateError;
+        }
 
         res.json(updatedProject);
+
     } catch (err) {
         console.error('Error updating project:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Delete project (Admin/Owner only)
+router.delete('/:id', auth, async (req, res) => {
+    try {
+        const supabase = req.supabase;
+        const userId = req.user.id;
+        const userRole = req.user.role;
+        const projectId = req.params.id;
+
+        console.log(`[DELETE /:id] User: ${userId}, Role: ${userRole}, Project: ${projectId}`);
+
+        // 1. Fetch project details to check ownership
+        const { data: project, error: fetchError } = await supabase
+            .rpc('get_project_by_id', { p_id: projectId })
+            .single();
+
+        if (fetchError || !project) {
+            return res.status(404).json({ message: 'Project not found' });
+        }
+
+        // 2. Permission Check
+        let isAuthorized = false;
+
+        if (userRole === 'owner') {
+            isAuthorized = true;
+        } else {
+            // Admin check
+            const { data: membership, error: memberError } = await supabase
+                .from('company_members')
+                .select('company_id, role')
+                .eq('user_id', userId)
+                .single();
+
+            if (!memberError && membership && (membership.role === 'admin' || membership.role === 'owner')) {
+                if (membership.company_id === project.company_id) {
+                    isAuthorized = true;
+                }
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ message: 'Access denied. You do not have permission to delete this project.' });
+        }
+
+        // 3. Delete via RPC
+        const { error: deleteError } = await supabase
+            .rpc('delete_project_rpc', { p_id: projectId });
+
+        if (deleteError) {
+            console.error('RPC delete_project_rpc failed:', deleteError);
+            throw deleteError;
+        }
+
+        res.json({ message: 'Project deleted successfully' });
+
+    } catch (err) {
+        console.error('Error deleting project:', err);
         res.status(500).json({ message: 'Server error' });
     }
 });

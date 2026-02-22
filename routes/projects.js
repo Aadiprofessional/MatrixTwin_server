@@ -132,27 +132,66 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
     try {
         const supabase = req.supabase;
         const userId = req.user.id;
-        // const userRole = req.user.role; // Not relying on global role for this, checking company role
+        const userRole = req.user.role; // Get global role
         const { name, description, status, location, client, deadline, image } = req.body;
 
-        console.log(`[POST /create] User: ${userId}`);
+        console.log(`[POST /create] User: ${userId}, Role: ${userRole}`);
 
-        // Get user's company membership
-        const { data: membership, error: memberError } = await supabase
-            .from('company_members')
-            .select('company_id, role')
-            .eq('user_id', userId)
-            .single();
+        let targetCompanyId = null;
 
-        if (memberError || !membership) {
-            return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
+        // Special handling for System Owner
+        if (userRole === 'owner') {
+             // If user is owner, they might not be in company_members table but have a company via users.company_id
+             // OR they are creating for their own company.
+             
+             // First check if they have a company_id in users table
+             const { data: userData, error: userError } = await supabase
+                .from('users')
+                .select('company_id')
+                .eq('id', userId)
+                .single();
+            
+             if (!userError && userData && userData.company_id) {
+                 targetCompanyId = userData.company_id;
+                 console.log(`Owner found with company_id: ${targetCompanyId}`);
+             } else {
+                 // Fallback: Check company_members just in case
+                 const { data: membership, error: memberError } = await supabase
+                    .from('company_members')
+                    .select('company_id, role')
+                    .eq('user_id', userId)
+                    .single();
+                 
+                 if (!memberError && membership) {
+                     targetCompanyId = membership.company_id;
+                 }
+             }
+
+             if (!targetCompanyId) {
+                 // If still no company, owner cannot create a "regular" project without a company context
+                 // Use /createOwner endpoint to create for ANY company
+                 return res.status(400).json({ message: 'Owner does not have a linked company. Please use /createOwner endpoint or join a company.' });
+             }
+
+        } else {
+            // Regular Admin check
+            // Get user's company membership
+            const { data: membership, error: memberError } = await supabase
+                .from('company_members')
+                .select('company_id, role')
+                .eq('user_id', userId)
+                .single();
+
+            if (memberError || !membership) {
+                return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
+            }
+
+            if (membership.role !== 'admin' && membership.role !== 'owner') {
+                return res.status(403).json({ message: 'Access denied. Only Admins/Owners can create projects.' });
+            }
+            
+            targetCompanyId = membership.company_id;
         }
-
-        if (membership.role !== 'admin' && membership.role !== 'owner') {
-            return res.status(403).json({ message: 'Access denied. Only Admins/Owners can create projects.' });
-        }
-        
-        const targetCompanyId = membership.company_id;
 
         // Handle image upload if present
         let imageUrl = image || null;

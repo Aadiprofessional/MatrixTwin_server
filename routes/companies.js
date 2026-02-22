@@ -4,6 +4,343 @@ const { auth, ownerOnly, adminOnly } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { sendEmail } = require('../utils/email');
 
+// --- 1. Join Request APIs ---
+
+/**
+ * @route   POST /api/companies/join
+ * @desc    Request to join a company (User Only)
+ * @access  Private (User)
+ */
+router.post(
+  '/join',
+  [
+    auth,
+    body('company_id').notEmpty().withMessage('Company ID is required')
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      const { company_id } = req.body;
+      const { supabase, user } = req;
+
+      // 1. Check if user role is 'user'
+    if (user.role !== 'user') {
+      return res.status(403).json({ message: 'Only users can join companies' });
+    }
+
+    // 2. Check if user is already in a company (via users table or company_members)
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('company_id')
+        .eq('id', user.id)
+        .single();
+      
+      if (userData?.company_id) {
+        return res.status(400).json({ message: 'You are already a member of a company.' });
+      }
+
+      // 2. Check for existing pending request
+      const { data: existingRequest } = await supabase
+        .from('company_join_requests')
+        .select('status')
+        .eq('user_id', user.id)
+        .eq('company_id', company_id)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+      if (existingRequest) {
+        return res.status(400).json({ message: 'You already have a pending request for this company.' });
+      }
+
+      // 3. Create Request
+      const { data: request, error } = await supabase
+        .from('company_join_requests')
+        .insert([{ user_id: user.id, company_id, status: 'pending' }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      res.status(201).json({ message: 'Join request submitted successfully', request });
+
+    } catch (err) {
+      console.error('Error joining company:', err);
+      res.status(500).json({ message: 'Server error' });
+    }
+  }
+);
+
+/**
+ * @route   GET /api/companies/requests
+ * @desc    List pending join requests
+ * @access  Private (Admin/Owner)
+ */
+router.get('/requests', [auth, adminOnly], async (req, res) => {
+  try {
+    const { supabase, user } = req;
+    let query = supabase
+      .from('company_join_requests')
+      .select(`
+        id, status, created_at,
+        user:user_id (id, name, email, avatar),
+        company:company_id (id, name)
+      `)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (user.role === 'owner') {
+      // Owner sees all requests
+    } else {
+      // Admin sees only requests for their company
+      // First get admin's company_id
+      const { data: adminCompany } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('admin_id', user.id)
+        .single();
+      
+      if (!adminCompany) {
+        return res.status(400).json({ message: 'You are not an admin of any company' });
+      }
+      
+      query = query.eq('company_id', adminCompany.id);
+    }
+
+    const { data: requests, error } = await query;
+    if (error) throw error;
+
+    res.json(requests);
+
+  } catch (err) {
+    console.error('Error listing requests:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * @route   PUT /api/companies/requests/:id/approve
+ * @desc    Approve a join request
+ * @access  Private (Admin/Owner)
+ */
+router.put('/requests/:id/approve', [auth, adminOnly], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { supabase, user } = req;
+
+    // 1. Fetch Request to check permissions
+    const { data: request, error: fetchError } = await supabase
+      .from('company_join_requests')
+      .select('*, company:company_id(admin_id)')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !request) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+
+    // 2. Permission Check
+    if (user.role !== 'owner') {
+      // Admin must own the company
+      if (request.company.admin_id !== user.id) {
+        return res.status(403).json({ message: 'Access denied. Not your company.' });
+      }
+    }
+
+    // 3. Approve using RPC
+    const { error: rpcError } = await supabase.rpc('approve_company_join_request_rpc', {
+      p_request_id: id,
+      p_approver_id: user.id
+    });
+
+    if (rpcError) throw rpcError;
+
+    res.json({ message: 'Request approved. User added to company.' });
+
+  } catch (err) {
+    console.error('Error approving request:', err);
+    res.status(500).json({ message: err.message || 'Server error' });
+  }
+});
+
+/**
+ * @route   PUT /api/companies/requests/:id/reject
+ * @desc    Reject a join request
+ * @access  Private (Admin/Owner)
+ */
+router.put('/requests/:id/reject', [auth, adminOnly], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { supabase, user } = req;
+
+    // 1. Fetch Request to check permissions
+    const { data: request, error: fetchError } = await supabase
+      .from('company_join_requests')
+      .select('*, company:company_id(admin_id)')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !request) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+
+    // 2. Permission Check
+    if (user.role !== 'owner') {
+      if (request.company.admin_id !== user.id) {
+        return res.status(403).json({ message: 'Access denied. Not your company.' });
+      }
+    }
+
+    // 3. Reject (Update status)
+    const { error } = await supabase
+      .from('company_join_requests')
+      .update({ status: 'rejected', updated_at: new Date() })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    res.json({ message: 'Request rejected.' });
+
+  } catch (err) {
+    console.error('Error rejecting request:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// --- 2. Member Management APIs ---
+
+/**
+ * @route   GET /api/companies/members
+ * @desc    List company members
+ * @access  Private (Admin/Owner)
+ */
+router.get('/members', [auth, adminOnly], async (req, res) => {
+  try {
+    const { supabase, user } = req;
+    
+    let query = supabase
+      .from('company_members')
+      .select(`
+        id, role, joined_at,
+        user:user_id (id, name, email, avatar, role),
+        company:company_id (id, name)
+      `)
+      .order('joined_at', { ascending: false });
+
+    if (user.role === 'owner') {
+      // Owner sees all members (can optionally filter by company_id)
+      if (req.query.company_id) {
+        query = query.eq('company_id', req.query.company_id);
+      }
+    } else {
+      // Admin sees only their company members
+      const { data: adminCompany } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('admin_id', user.id)
+        .single();
+      
+      if (!adminCompany) {
+        return res.status(400).json({ message: 'You are not an admin of any company' });
+      }
+      
+      query = query.eq('company_id', adminCompany.id);
+    }
+
+    const { data: members, error } = await query;
+    if (error) throw error;
+
+    res.json(members);
+
+  } catch (err) {
+    console.error('Error listing members:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * @route   DELETE /api/companies/members/:user_id
+ * @desc    Remove a member from company
+ * @access  Private (Admin/Owner)
+ */
+router.delete('/members/:user_id', [auth, adminOnly], async (req, res) => {
+  try {
+    const { user_id } = req.params; // The user to remove
+    const { supabase, user } = req; // The actor (Admin/Owner)
+
+    // 1. Determine Company ID
+    let targetCompanyId;
+
+    if (user.role === 'owner') {
+        // Owner can remove anyone, but we need to know WHICH company they are being removed from.
+        // Or we just find which company the user belongs to.
+        const { data: memberRecord, error: memberError } = await supabase
+            .from('company_members')
+            .select('company_id')
+            .eq('user_id', user_id)
+            .single();
+        
+        if (memberError || !memberRecord) {
+            return res.status(404).json({ message: 'Member not found in any company' });
+        }
+        targetCompanyId = memberRecord.company_id;
+    } else {
+        // Admin: Can only remove from their company
+        const { data: adminCompany } = await supabase
+            .from('companies')
+            .select('id')
+            .eq('admin_id', user.id)
+            .single();
+        
+        if (!adminCompany) {
+            return res.status(403).json({ message: 'You are not an admin of any company' });
+        }
+        targetCompanyId = adminCompany.id;
+
+        // Verify user is actually in this company
+        const { data: isMember } = await supabase
+            .from('company_members')
+            .select('id')
+            .eq('company_id', targetCompanyId)
+            .eq('user_id', user_id)
+            .maybeSingle();
+        
+        if (!isMember) {
+            return res.status(404).json({ message: 'User is not a member of your company' });
+        }
+    }
+
+    // 2. Prevent removing self (Admin removing self)
+    if (user_id === user.id) {
+        return res.status(400).json({ message: 'You cannot remove yourself.' });
+    }
+    
+    // 3. Prevent removing the Company Owner (if applicable) or Admin?
+    // Let's assume Owner can remove Admin, Admin can remove Members.
+    // Check role of target user?
+    // For now, simple removal.
+
+    // 4. Remove using RPC
+    const { error: rpcError } = await supabase.rpc('remove_company_member_rpc', {
+      p_user_id: user_id,
+      p_company_id: targetCompanyId
+    });
+
+    if (rpcError) throw rpcError;
+
+    res.json({ message: 'Member removed successfully' });
+
+  } catch (err) {
+    console.error('Error removing member:', err);
+    res.status(500).json({ message: err.message || 'Server error' });
+  }
+});
+
+// --- 3. Company Management APIs (Existing/Updated) ---
+
 /**
  * @route   POST /api/companies
  * @desc    Create a new company
@@ -25,13 +362,6 @@ router.post(
     try {
       const { name, details } = req.body;
       const { supabase } = req;
-
-      // Insert company (trigger will generate code)
-      // Note: 'created_by' might not exist in the schema yet if SQL update hasn't been run.
-      // We should check if we can insert it, or just fallback to basic insert.
-      // But we can't easily check schema at runtime efficiently.
-      // Let's assume the user hasn't run the SQL update yet, so we should stick to what works (name, details).
-      // BUT we need the ID to add to company_members.
       
       const companyData = { name, details: details || {} };
       
@@ -43,21 +373,20 @@ router.post(
 
       if (error) throw error;
 
-      // Manually add the creator (Owner) to company_members
-      // This ensures they are a member even if the trigger hasn't been created yet
-      const { error: memberError } = await supabase
+      // Add owner as member
+      await supabase
         .from('company_members')
         .insert({
             company_id: data.id,
             user_id: req.user.id,
             role: 'owner'
         });
-        
-      if (memberError) {
-          console.warn('Warning: Could not add owner to company_members immediately:', memberError);
-          // Don't fail the request, but log it. 
-          // If unique constraint fails, it means trigger likely worked or they are already there.
-      }
+
+      // Update owner's company_id in users table
+      await supabase
+        .from('users')
+        .update({ company_id: data.id })
+        .eq('id', req.user.id);
 
       res.status(201).json({ message: 'Company created successfully', company: data });
     } catch (err) {
@@ -89,446 +418,6 @@ router.get('/', [auth, ownerOnly], async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error('Error fetching companies:', err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/**
- * @route   PUT /api/companies/:id/assign-admin
- * @desc    Assign an admin to a company
- * @access  Private (Owner)
- */
-router.put(
-  '/:id/assign-admin',
-  [
-    auth,
-    ownerOnly,
-    body('admin_id').notEmpty().withMessage('Admin ID is required')
-  ],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    try {
-      const { id } = req.params;
-      const { admin_id } = req.body;
-      const { supabase } = req;
-
-      // 1. Verify that the user exists and is an admin
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', admin_id)
-        .single();
-
-      if (userError || !user) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-
-      if (user.role !== 'admin') {
-        return res.status(400).json({ message: 'Selected user is not an admin. Please promote them first.' });
-      }
-
-      // 2. Check if this admin is already assigned to another company
-      // Requirement: "1 admin user can only assign to 1 company"
-      const { data: existingAssignment, error: assignmentError } = await supabase
-        .from('companies')
-        .select('id, name')
-        .eq('admin_id', admin_id)
-        .neq('id', id)
-        .maybeSingle();
-
-      if (existingAssignment) {
-        return res.status(400).json({ 
-          message: `This admin is already assigned to company: ${existingAssignment.name}. An admin can only manage one company.` 
-        });
-      }
-
-      // 3. Update company
-      const { data, error } = await supabase
-        .from('companies')
-        .update({ admin_id })
-        .eq('id', id)
-        .select();
-
-      if (error) throw error;
-
-      // Add to company_members as admin (handled by trigger, but can force here too if needed)
-      // The trigger 'on_company_created_add_member' only runs on INSERT.
-      // We need to add logic here or a trigger on UPDATE to companies.admin_id.
-      // Let's do it manually here for safety.
-      
-      const { error: memberError } = await supabase
-        .from('company_members')
-        .upsert({ 
-            company_id: id, 
-            user_id: admin_id, 
-            role: 'admin' 
-        }, { onConflict: 'user_id' }); // Move from other company if any
-
-      if (memberError) console.error('Error adding admin to members:', memberError);
-
-      res.json({ message: 'Admin assigned successfully', company: data });
-    } catch (err) {
-      console.error('Error assigning admin:', err);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
-/**
- * @route   GET /api/companies/:id/members
- * @desc    Get members of a company
- * @access  Private (Owner)
- */
-router.get(
-  '/:id/members',
-  [auth, ownerOnly],
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { supabase } = req;
-
-      const { data, error } = await supabase
-        .from('company_members')
-        .select(`
-          user_id,
-          role,
-          joined_at,
-          user:user_id (id, name, email, avatar)
-        `)
-        .eq('company_id', id);
-
-      if (error) throw error;
-      
-      const members = data.map(m => ({
-          user_id: m.user_id, // Ensure user_id is top level
-          name: m.user.name,
-          email: m.user.email,
-          avatar: m.user.avatar,
-          role: m.role,
-          joined_at: m.joined_at
-      }));
-
-      res.json(members);
-    } catch (err) {
-      console.error('Error fetching members:', err);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
-/**
- * @route   POST /api/companies/invite
- * @desc    Invite a user to join the company via email
- * @access  Private (Admin/Owner)
- */
-router.post(
-  '/invite',
-  [
-    auth,
-    adminOnly,
-    body('email').isEmail().withMessage('Valid email is required')
-  ],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    try {
-      const { email, company_id } = req.body; // company_id optional if user is admin
-      const { supabase, user } = req;
-
-      let targetCompanyId = company_id;
-      let companyName = '';
-      let companyCode = '';
-
-      // Identify the company
-      if (user.role === 'owner') {
-        if (!targetCompanyId) {
-          return res.status(400).json({ message: 'Company ID is required for owners' });
-        }
-        const { data: company, error } = await supabase.from('companies').select('name, code').eq('id', targetCompanyId).single();
-        if (error || !company) return res.status(404).json({ message: 'Company not found' });
-        companyName = company.name;
-        companyCode = company.code;
-      } else {
-        // User is admin, find their company
-        const { data: company, error } = await supabase.from('companies').select('id, name, code').eq('admin_id', user.id).single();
-        if (error || !company) return res.status(400).json({ message: 'You are not assigned to any company' });
-        targetCompanyId = company.id;
-        companyName = company.name;
-        companyCode = company.code;
-      }
-
-      // Send Email
-      const inviteLink = `${process.env.EMAIL_CONFIRM_REDIRECT_URL}?company_code=${companyCode}`; // Assuming a frontend route
-      const subject = `Invitation to join ${companyName}`;
-      const text = `You have been invited to join ${companyName}. Use code: ${companyCode} or click here: ${inviteLink}`;
-      const html = `<p>You have been invited to join <strong>${companyName}</strong>.</p><p>Use code: <strong>${companyCode}</strong></p><p><a href="${inviteLink}">Click here to join</a></p>`;
-
-      await sendEmail(email, subject, text, html);
-
-      res.json({ message: `Invitation sent to ${email} for company ${companyName}` });
-    } catch (err) {
-      console.error('Error sending invite:', err);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
-/**
- * @route   POST /api/companies/join
- * @desc    Request to join a company (by ID or Code)
- * @access  Private (User)
- */
-router.post(
-  '/join',
-  [
-    auth,
-    body('company_identifier').notEmpty().withMessage('Company ID or Code is required')
-  ],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    try {
-      const { company_identifier } = req.body;
-      const { supabase, user } = req;
-
-      // 1. Check if user is already in a company
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('company_id')
-        .eq('id', user.id)
-        .single();
-      
-      if (userData?.company_id) {
-        return res.status(400).json({ message: 'You are already a member of a company.' });
-      }
-
-      // 2. Find company by ID or Code
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(company_identifier);
-      
-      let companyId;
-      if (isUuid) {
-        const { data: foundId, error } = await supabase.rpc('get_company_by_id', { comp_id: company_identifier });
-        if (error) {
-             console.error('Error in get_company_by_id:', error);
-             return res.status(500).json({ message: 'Server error' });
-        }
-        companyId = foundId;
-      } else {
-        const { data: foundId, error } = await supabase.rpc('get_company_by_code', { company_code: company_identifier });
-        if (error) {
-             console.error('Error in get_company_by_code:', error);
-             // Try uppercase if error? No, error is likely system error. Not found returns null data.
-        }
-        companyId = foundId;
-        
-        if (!companyId) {
-             // Try uppercase
-             const { data: foundIdUpper } = await supabase.rpc('get_company_by_code', { company_code: company_identifier.toUpperCase() });
-             companyId = foundIdUpper;
-        }
-      }
-
-      if (!companyId) {
-        return res.status(404).json({ message: 'Company not found' });
-      }
-
-      await createRequest(supabase, user.id, companyId, res);
-
-    } catch (err) {
-      console.error('Error joining company:', err);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
-async function createRequest(supabase, userId, companyId, res) {
-  // Check for existing pending request
-  const { data: existingRequest } = await supabase
-    .from('company_join_requests')
-    .select('status')
-    .eq('user_id', userId)
-    .eq('company_id', companyId)
-    .eq('status', 'pending')
-    .maybeSingle();
-
-  if (existingRequest) {
-    return res.status(400).json({ message: 'You already have a pending request for this company.' });
-  }
-
-  // Create request
-  const { error } = await supabase
-    .from('company_join_requests')
-    .insert([{ user_id: userId, company_id: companyId, status: 'pending' }]);
-
-  if (error) throw error;
-
-  res.status(201).json({ message: 'Join request submitted successfully. Waiting for admin approval.' });
-}
-
-/**
- * @route   GET /api/companies/requests
- * @desc    Get pending join requests for my company
- * @access  Private (Admin/Owner)
- */
-router.get('/requests', [auth, adminOnly], async (req, res) => {
-  try {
-    const { supabase, user } = req;
-    let companyId;
-
-    if (user.role === 'owner') {
-      // Owner sees all requests? Or needs to specify company?
-      // Let's allow owner to see all requests or filter by company_id query param
-      if (req.query.company_id) {
-        companyId = req.query.company_id;
-      } else {
-        // Return all pending requests
-        const { data, error } = await supabase
-          .from('company_join_requests')
-          .select(`
-            id, status, created_at,
-            user:user_id (id, name, email, avatar),
-            company:company_id (id, name)
-          `)
-          .eq('status', 'pending')
-          .order('created_at', { ascending: false });
-          
-        if (error) throw error;
-        return res.json(data);
-      }
-    } else {
-      // Admin: find their company
-      const { data: company } = await supabase.from('companies').select('id').eq('admin_id', user.id).single();
-      if (!company) return res.status(400).json({ message: 'You are not assigned to any company' });
-      companyId = company.id;
-    }
-
-    const { data, error } = await supabase
-      .from('company_join_requests')
-      .select(`
-        id, status, created_at,
-        user:user_id (id, name, email, avatar),
-        company:company_id (id, name)
-      `)
-      .eq('company_id', companyId)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    res.json(data);
-  } catch (err) {
-    console.error('Error fetching requests:', err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/**
- * @route   PUT /api/companies/requests/:id/approve
- * @desc    Approve a join request
- * @access  Private (Admin/Owner)
- */
-router.put('/requests/:id/approve', [auth, adminOnly], async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    const { supabase, user } = req;
-
-    // Only handle 'approved' or 'rejected'
-    if (!['approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ message: 'Invalid status' });
-    }
-
-    // If rejected, just update the status directly (no complex logic needed)
-    if (status === 'rejected') {
-      const { error } = await supabase
-        .from('company_join_requests')
-        .update({ status: 'rejected', updated_at: new Date() })
-        .eq('id', id);
-      
-      if (error) throw error;
-      return res.json({ message: 'Request rejected' });
-    }
-
-    // If approved, use RPC
-    // 1. Verify Request Exists (redundant if RPC handles it, but good for error message)
-    const { data: request, error: requestError } = await supabase
-      .from('company_join_requests')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (requestError || !request) {
-      return res.status(404).json({ message: 'Request not found' });
-    }
-
-    if (request.status !== 'pending') {
-      return res.status(400).json({ message: 'Request is not pending' });
-    }
-
-    // 2. Check permissions
-    if (user.role !== 'owner') {
-      // Check if user is admin of this company
-      const { data: company, error: companyError } = await supabase
-        .from('companies')
-        .select('admin_id')
-        .eq('id', request.company_id)
-        .single();
-      
-      if (companyError || !company || company.admin_id !== user.id) {
-        return res.status(403).json({ message: 'Permission denied' });
-      }
-    }
-
-    // 3. Approve Request
-    // Use the secure RPC function to update status and add to company_members
-    const { error: rpcError } = await supabase.rpc('approve_join_request', { request_id: id });
-    
-    if (rpcError) {
-      console.error('Error approving request:', rpcError);
-      // If permission denied or other error
-      return res.status(400).json({ message: rpcError.message });
-    }
-
-    res.json({ message: 'Request approved and user added to company members' });
-  } catch (err) {
-    console.error('Error approving request:', err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/**
- * @route   PUT /api/companies/requests/:id/reject
- * @desc    Reject a join request
- * @access  Private (Admin/Owner)
- */
-router.put('/requests/:id/reject', [auth, adminOnly], async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { supabase } = req;
-
-    // Check permissions manually since simple update
-    // (RLS on company_join_requests should handle this if configured correctly)
-    
-    const { error } = await supabase
-      .from('company_join_requests')
-      .update({ status: 'rejected', updated_at: new Date() })
-      .eq('id', id);
-
-    if (error) throw error;
-
-    res.json({ message: 'Request rejected' });
-  } catch (err) {
-    console.error('Error rejecting request:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });

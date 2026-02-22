@@ -219,3 +219,67 @@ curl -X DELETE "$BASE_URL/api/projects/$PROJECT_ID" \
   -H "dev-role: owner" \
   -H "Content-Type: application/json"
 echo -e "\n"
+
+# --- 11. Company Membership APIs ---
+
+# 11.1 Join Company Request (User)
+# User with NO company requests to join. Replace COMPANY_ID.
+COMPANY_ID="REPLACE_WITH_COMPANY_ID"
+USER_ID_NO_COMPANY="REPLACE_WITH_USER_ID"
+echo "Requesting to join company as User..."
+curl -X POST "$BASE_URL/api/companies/join" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: $USER_ID_NO_COMPANY" \
+  -H "dev-role: user" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"company_id\": \"$COMPANY_ID\"
+  }"
+echo -e "\n"
+
+# 11.2 List Join Requests (Admin)
+echo "Listing join requests as Admin..."
+curl -X GET "$BASE_URL/api/companies/requests" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: 95ed2a2f-b239-4b9f-9ae1-cacd6e3f19f4" \
+  -H "dev-role: admin" \
+  -H "Content-Type: application/json"
+echo -e "\n"
+
+# 11.3 Approve Join Request (Admin)
+REQUEST_ID="REPLACE_WITH_REQUEST_ID"
+echo "Approving join request as Admin..."
+curl -X PUT "$BASE_URL/api/companies/requests/$REQUEST_ID/approve" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: 95ed2a2f-b239-4b9f-9ae1-cacd6e3f19f4" \
+  -H "dev-role: admin" \
+  -H "Content-Type: application/json"
+echo -e "\n"
+
+# 11.4 List Members (Admin)
+echo "Listing members as Admin..."
+curl -X GET "$BASE_URL/api/companies/members" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: 95ed2a2f-b239-4b9f-9ae1-cacd6e3f19f4" \
+  -H "dev-role: admin" \
+  -H "Content-Type: application/json"
+echo -e "\n"
+
+# 11.5 List Members (Owner - All)
+echo "Listing all members as Owner..."
+curl -X GET "$BASE_URL/api/companies/members" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: 3e4fda0e-3012-4b41-b95a-3ea61c859f39" \
+  -H "dev-role: owner" \
+  -H "Content-Type: application/json"
+echo -e "\n"
+
+# 11.6 Remove Member (Admin)
+MEMBER_ID_TO_REMOVE="REPLACE_WITH_MEMBER_ID"
+echo "Removing member as Admin..."
+curl -X DELETE "$BASE_URL/api/companies/members/$MEMBER_ID_TO_REMOVE" \
+  -H "dev-skip-auth: true" \
+  -H "dev-user-id: 95ed2a2f-b239-4b9f-9ae1-cacd6e3f19f4" \
+  -H "dev-role: admin" \
+  -H "Content-Type: application/json"
+echo -e "\n"

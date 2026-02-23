@@ -213,42 +213,41 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
             }
         }
 
-        // Use RPC to create project (bypassing RLS)
+        // Helper to normalize status
+        const normalizeStatus = (s) => {
+            if (!s) return 'upcoming';
+            const statusMap = {
+                'active': 'in_progress',
+                'pending': 'upcoming',
+                'done': 'completed'
+            };
+            const validStatuses = ['upcoming', 'in_progress', 'completed', 'on_hold'];
+            const normalized = statusMap[s.toLowerCase()] || s.toLowerCase();
+            return validStatuses.includes(normalized) ? normalized : 'upcoming';
+        };
+
+        const finalStatus = normalizeStatus(status);
+
+        // Use direct insert (bypassing RPC as RLS is disabled)
         const { data: project, error } = await supabase
-            .rpc('create_project_rpc', {
-                p_company_id: targetCompanyId,
-                p_name: name,
-                p_description: description,
-                p_status: status || 'upcoming',
-                p_location: location,
-                p_client: client,
-                p_deadline: deadline,
-                p_image_url: imageUrl,
-                p_created_by: userId
+            .from('projects')
+            .insert({
+                company_id: targetCompanyId,
+                name,
+                description,
+                status: finalStatus,
+                location,
+                client,
+                deadline,
+                image_url: imageUrl,
+                created_by: userId
             })
+            .select()
             .single();
 
         if (error) {
-             console.error('RPC create_project_rpc failed:', error);
-             // Fallback to normal insert if RPC fails (though likely RLS will block it)
-             const { data: projectFallback, error: errorFallback } = await supabase
-                .from('projects')
-                .insert({
-                    company_id: targetCompanyId,
-                    name,
-                    description,
-                    status: status || 'upcoming',
-                    location,
-                    client,
-                    deadline,
-                    image_url: imageUrl,
-                    created_by: userId
-                })
-                .select()
-                .single();
-
-             if (errorFallback) throw errorFallback;
-             return res.status(201).json(projectFallback);
+             console.error('Error creating project:', error);
+             throw error;
         }
 
         res.status(201).json(project);
@@ -301,42 +300,41 @@ router.post('/createOwner', [auth, upload.single('image')], async (req, res) => 
             }
         }
 
-        // Use RPC to create project (bypassing RLS)
+        // Helper to normalize status
+        const normalizeStatus = (s) => {
+            if (!s) return 'upcoming';
+            const statusMap = {
+                'active': 'in_progress',
+                'pending': 'upcoming',
+                'done': 'completed'
+            };
+            const validStatuses = ['upcoming', 'in_progress', 'completed', 'on_hold'];
+            const normalized = statusMap[s.toLowerCase()] || s.toLowerCase();
+            return validStatuses.includes(normalized) ? normalized : 'upcoming';
+        };
+
+        const finalStatus = normalizeStatus(status);
+
+        // Use direct insert (bypassing RPC as RLS is disabled)
         const { data: project, error } = await supabase
-            .rpc('create_project_rpc', {
-                p_company_id: targetCompanyId,
-                p_name: name,
-                p_description: description,
-                p_status: status || 'upcoming',
-                p_location: location,
-                p_client: client,
-                p_deadline: deadline,
-                p_image_url: imageUrl,
-                p_created_by: userId
+            .from('projects')
+            .insert({
+                company_id: targetCompanyId,
+                name,
+                description,
+                status: finalStatus,
+                location,
+                client,
+                deadline,
+                image_url: imageUrl,
+                created_by: userId
             })
+            .select()
             .single();
 
         if (error) {
-             console.error('RPC create_project_rpc failed:', error);
-             // Fallback to normal insert if RPC fails
-             const { data: projectFallback, error: errorFallback } = await supabase
-                .from('projects')
-                .insert({
-                    company_id: targetCompanyId,
-                    name,
-                    description,
-                    status: status || 'upcoming',
-                    location,
-                    client,
-                    deadline,
-                    image_url: imageUrl,
-                    created_by: userId
-                })
-                .select()
-                .single();
-
-             if (errorFallback) throw errorFallback;
-             return res.status(201).json(projectFallback);
+             console.error('Error creating project:', error);
+             throw error;
         }
 
         res.status(201).json(project);
@@ -432,23 +430,39 @@ router.put('/:id', [auth, upload.single('image')], async (req, res) => {
             }
         }
 
-        // 4. Update via RPC (bypassing RLS)
-        // Pass existing values if new ones are undefined/null
+        // 4. Update directly (bypassing RLS)
+        // Helper to normalize status
+        const normalizeStatus = (s) => {
+            if (!s) return 'upcoming';
+            const statusMap = {
+                'active': 'in_progress',
+                'pending': 'upcoming',
+                'done': 'completed'
+            };
+            const validStatuses = ['upcoming', 'in_progress', 'completed', 'on_hold'];
+            const normalized = statusMap[s.toLowerCase()] || s.toLowerCase();
+            return validStatuses.includes(normalized) ? normalized : 'upcoming';
+        };
+
+        const finalStatus = status ? normalizeStatus(status) : project.status;
+
         const { data: updatedProject, error: updateError } = await supabase
-            .rpc('update_project_rpc', {
-                p_id: projectId,
-                p_name: name || project.name,
-                p_description: description || project.description,
-                p_status: status || project.status,
-                p_location: location || project.location,
-                p_client: client || project.client,
-                p_deadline: deadline || project.deadline,
-                p_image_url: imageUrl
+            .from('projects')
+            .update({
+                name: name || project.name,
+                description: description || project.description,
+                status: finalStatus,
+                location: location || project.location,
+                client: client || project.client,
+                deadline: deadline || project.deadline,
+                image_url: imageUrl
             })
+            .eq('id', projectId)
+            .select()
             .single();
 
         if (updateError) {
-            console.error('RPC update_project_rpc failed:', updateError);
+            console.error('Error updating project:', updateError);
             throw updateError;
         }
 
@@ -518,12 +532,14 @@ router.delete('/:id', auth, async (req, res) => {
             return res.status(403).json({ message: 'Access denied. You do not have permission to delete this project.' });
         }
 
-        // 3. Delete via RPC
+        // 3. Delete directly (bypassing RLS)
         const { error: deleteError } = await supabase
-            .rpc('delete_project_rpc', { p_id: projectId });
+            .from('projects')
+            .delete()
+            .eq('id', projectId);
 
         if (deleteError) {
-            console.error('RPC delete_project_rpc failed:', deleteError);
+            console.error('Error deleting project:', deleteError);
             throw deleteError;
         }
 

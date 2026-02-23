@@ -5,7 +5,6 @@ const morgan = require('morgan');
 const { createSupabaseClient } = require('./supabase-client');
 
 // Import all route modules
-const testRoutes = require('./routes/test');
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const formRoutes = require('./routes/forms');
@@ -108,7 +107,6 @@ app.get('/', (req, res) => {
       safety: '/api/safety',
       inspection: '/api/inspection',
       survey: '/api/survey',
-      test: '/api/test',
       admin: '/api/admin',
       companies: '/api/companies'
     }
@@ -116,7 +114,6 @@ app.get('/', (req, res) => {
 });
 
 // Route setup
-app.use('/api/test', testRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/companies', companyRoutes);
@@ -159,8 +156,7 @@ app.use('*', (req, res) => {
       '/api/labour',
       '/api/safety',
       '/api/inspection',
-      '/api/survey',
-      '/api/test'
+      '/api/survey'
     ]
   });
 });

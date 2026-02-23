@@ -37,6 +37,7 @@ const auth = (req, res, next) => {
     // This ensures RLS policies work correctly using auth.uid()
     // We only do this if we have the Supabase token in our payload
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY && decoded.sb_token) {
+      console.log('Initializing authenticated Supabase client for user:', decoded.id);
       const supabaseUrl = process.env.SUPABASE_URL || 'https://supabase.matrixaiserver.com';
       const supabaseKey = process.env.SUPABASE_ANON_KEY;
       
@@ -47,6 +48,8 @@ const auth = (req, res, next) => {
           }
         }
       });
+    } else if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        console.log('No sb_token found in JWT, using anonymous Supabase client');
     }
 
     next();

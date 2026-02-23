@@ -35,114 +35,107 @@ router.get('/list', auth, async (req, res) => {
 
         console.log(`[GET /list] User: ${userId}, Role: ${userRole}`);
 
-        // 1. Owner (Super Admin) - View ALL projects
+        // 1. Owner (Super Admin) - View ALL projects grouped by company
         if (userRole === 'owner') {
-            console.log('User is owner, fetching all projects via RPC');
-            // Use RPC to bypass RLS recursion
-            const { data: projects, error } = await supabase
-                .rpc('get_all_projects_owner');
+            console.log('User is owner, fetching all projects grouped by company');
+            
+            // Fetch all companies
+            const { data: companies, error: companiesError } = await supabase
+                .from('companies')
+                .select('*')
+                .order('name');
+            
+            if (companiesError) throw companiesError;
 
-            if (error) {
-                console.error('RPC get_all_projects_owner failed:', error);
-                // Fallback to normal query if RPC doesn't exist (though RLS might fail)
-                const { data: projectsFallback, error: errorFallback } = await supabase
-                    .from('projects')
-                    .select('*')
-                    .order('created_at', { ascending: false });
-                
-                if (errorFallback) throw errorFallback;
-                return res.json(projectsFallback);
+            // Fetch all projects
+            const { data: projects, error: projectsError } = await supabase
+                .from('projects')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (projectsError) throw projectsError;
+
+            // Group projects by company
+            const result = companies.map(company => {
+                const companyProjects = projects.filter(p => p.company_id === company.id);
+                return {
+                    ...company,
+                    projects: companyProjects
+                };
+            });
+
+            // Add projects with no company (if any, though schema says company_id not null)
+            const orphanProjects = projects.filter(p => !companies.find(c => c.id === p.company_id));
+            if (orphanProjects.length > 0) {
+                result.push({
+                    id: 'orphan',
+                    name: 'No Company',
+                    projects: orphanProjects
+                });
             }
-            return res.json(projects);
+
+            return res.json(result);
         }
 
-        // 2. Get user's company membership for Admin/Member
-        let membership = null;
-        
-        // First try company_members
-        const { data: memberData, error: memberError } = await supabase
-            .from('company_members')
-            .select('company_id, role')
-            .eq('user_id', userId)
+        // 2. Fetch User Details to determine role and company
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
             .single();
 
-        if (memberData) {
-            membership = memberData;
-        } else {
-            // Fallback: Check users table if company_members is empty (e.g. for newly approved admins)
-            console.log('User not found in company_members, checking users table...');
-            const { data: userData, error: userError } = await supabase
-                .from('users')
-                .select('company_id, role')
-                .eq('id', userId)
-                .single();
-            
-            if (userData && userData.company_id) {
-                membership = {
-                    company_id: userData.company_id,
-                    role: userData.role || 'member' // Default to member if role missing, but usually present
-                };
-                console.log('Found user company info in users table:', membership);
-            }
+        if (userError || !user) {
+            console.error('User not found in users table:', userError);
+            return res.status(404).json({ message: 'User profile not found' });
         }
 
-        if (!membership) {
-            console.log('User has no company membership (checked both tables)');
-            return res.status(404).json({ message: 'User does not belong to any company' });
+        console.log(`User details: Role=${user.role}, Company=${user.company_id}`);
+
+        // 3. Admin Logic: Fetch all projects for their company
+        if (user.role === 'admin') {
+            if (!user.company_id) {
+                return res.status(400).json({ message: 'Admin user is not assigned to a company' });
+            }
+
+            console.log(`Fetching projects for company ${user.company_id}`);
+            const { data: projects, error } = await supabase
+                .from('projects')
+                .select('*, company:companies(id, name)')
+                .eq('company_id', user.company_id)
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            return res.json(projects);
         }
+
+        // 4. Member (User) Logic: Fetch only assigned projects
+        // Default to this for any role other than 'owner' or 'admin'
+        console.log('Fetching assigned projects for member');
         
-        console.log(`User company membership: ${JSON.stringify(membership)}`);
+        // Get project IDs from project_members
+        const { data: memberships, error: memberError } = await supabase
+            .from('project_members')
+            .select('project_id')
+            .eq('user_id', userId);
 
-        // 3. Admin - View all company projects
-        if (membership.role === 'admin' || membership.role === 'owner') {
-            console.log('User is admin/company-owner, fetching company projects via RPC');
-            
-            // Try RPC first
-            const { data: projects, error } = await supabase
-                .rpc('get_company_projects', { p_company_id: membership.company_id });
+        if (memberError) throw memberError;
 
-            if (error) {
-                console.error('RPC get_company_projects failed, falling back to RLS:', error);
-                const { data: projectsFallback, error: errorFallback } = await supabase
-                    .from('projects')
-                    .select('*, members:project_members(user_id, role)')
-                    .eq('company_id', membership.company_id)
-                    .order('created_at', { ascending: false });
-
-                if (errorFallback) throw errorFallback;
-                return res.json(projectsFallback);
-            }
-            return res.json(projects);
+        if (!memberships || memberships.length === 0) {
+            return res.json([]); // No projects assigned
         }
 
-        // 4. Member - View only assigned projects
-        if (membership.role === 'member') {
-            console.log('User is member, fetching assigned projects via RPC');
-            
-            // Try RPC first
-            const { data: projects, error } = await supabase
-                .rpc('get_member_projects', { 
-                    p_user_id: userId, 
-                    p_company_id: membership.company_id 
-                });
+        const projectIds = memberships.map(m => m.project_id);
+        
+        // Fetch project details
+        const { data: projects, error: projectsError } = await supabase
+            .from('projects')
+            .select('*, company:companies(id, name)')
+            .in('id', projectIds)
+            .order('created_at', { ascending: false });
 
-            if (error) {
-                console.error('RPC get_member_projects failed, falling back to RLS:', error);
-                const { data: projectsFallback, error: errorFallback } = await supabase
-                    .from('projects')
-                    .select('*, members:project_members!inner(user_id, role)')
-                    .eq('company_id', membership.company_id)
-                    .eq('members.user_id', userId)
-                    .order('created_at', { ascending: false });
-
-                if (errorFallback) throw errorFallback;
-                return res.json(projectsFallback);
-            }
-            return res.json(projects);
-        }
-
-        // Default: Access denied if role not recognized
-        return res.status(403).json({ message: 'Access denied' });
+        if (projectsError) throw projectsError;
+        
+        return res.json(projects);
 
     } catch (err) {
         console.error('Error fetching projects:', err);

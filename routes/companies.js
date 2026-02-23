@@ -3,6 +3,7 @@ const router = express.Router();
 const { auth, ownerOnly, adminOnly } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const { sendEmail } = require('../utils/email');
+const { createSupabaseClient } = require('../supabase-client');
 
 // --- 1. Join Request APIs ---
 
@@ -56,8 +57,14 @@ router.post(
         return res.status(400).json({ message: 'You already have a pending request for this company.' });
       }
 
+      // Use service role client if available to bypass RLS for insertion
+      let dbClient = supabase;
+      if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          dbClient = createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+      }
+
       // 3. Create Request
-      const { data: request, error } = await supabase
+      const { data: request, error } = await dbClient
         .from('company_join_requests')
         .insert([{ user_id: user.id, company_id, status: 'pending' }])
         .select()
@@ -69,7 +76,7 @@ router.post(
 
     } catch (err) {
       console.error('Error joining company:', err);
-      res.status(500).json({ message: 'Server error' });
+      res.status(500).json({ message: 'Server error', error: err.message });
     }
   }
 );

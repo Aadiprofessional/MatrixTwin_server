@@ -57,14 +57,37 @@ router.get('/list', auth, async (req, res) => {
         }
 
         // 2. Get user's company membership for Admin/Member
-        const { data: membership, error: memberError } = await supabase
+        let membership = null;
+        
+        // First try company_members
+        const { data: memberData, error: memberError } = await supabase
             .from('company_members')
             .select('company_id, role')
             .eq('user_id', userId)
             .single();
 
-        if (memberError || !membership) {
-            console.log('User has no company membership');
+        if (memberData) {
+            membership = memberData;
+        } else {
+            // Fallback: Check users table if company_members is empty (e.g. for newly approved admins)
+            console.log('User not found in company_members, checking users table...');
+            const { data: userData, error: userError } = await supabase
+                .from('users')
+                .select('company_id, role')
+                .eq('id', userId)
+                .single();
+            
+            if (userData && userData.company_id) {
+                membership = {
+                    company_id: userData.company_id,
+                    role: userData.role || 'member' // Default to member if role missing, but usually present
+                };
+                console.log('Found user company info in users table:', membership);
+            }
+        }
+
+        if (!membership) {
+            console.log('User has no company membership (checked both tables)');
             return res.status(404).json({ message: 'User does not belong to any company' });
         }
         
@@ -138,13 +161,34 @@ router.post('/create', [auth, upload.single('image')], async (req, res) => {
         console.log(`[POST /create] User: ${userId}`);
 
         // Get user's company membership
-        const { data: membership, error: memberError } = await supabase
+        let membership = null;
+
+        // First try company_members
+        const { data: memberData, error: memberError } = await supabase
             .from('company_members')
             .select('company_id, role')
             .eq('user_id', userId)
             .single();
 
-        if (memberError || !membership) {
+        if (memberData) {
+            membership = memberData;
+        } else {
+             // Fallback: Check users table
+            const { data: userData } = await supabase
+                .from('users')
+                .select('company_id, role')
+                .eq('id', userId)
+                .single();
+            
+            if (userData && userData.company_id) {
+                membership = {
+                    company_id: userData.company_id,
+                    role: userData.role
+                };
+            }
+        }
+
+        if (!membership) {
             return res.status(403).json({ message: 'Access denied. You must belong to a company.' });
         }
 
@@ -338,13 +382,28 @@ router.put('/:id', [auth, upload.single('image')], async (req, res) => {
             isAuthorized = true;
         } else {
             // Admin: Must belong to same company
-            const { data: membership, error: memberError } = await supabase
+            let membership = null;
+            const { data: memberData, error: memberError } = await supabase
                 .from('company_members')
                 .select('company_id, role')
                 .eq('user_id', userId)
                 .single();
 
-            if (!memberError && membership && (membership.role === 'admin' || membership.role === 'owner')) {
+            if (memberData) {
+                membership = memberData;
+            } else {
+                // Fallback
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('company_id, role')
+                    .eq('id', userId)
+                    .single();
+                if (userData && userData.company_id) {
+                    membership = { company_id: userData.company_id, role: userData.role };
+                }
+            }
+
+            if (membership && (membership.role === 'admin' || membership.role === 'owner')) {
                 if (membership.company_id === project.company_id) {
                     isAuthorized = true;
                 }
@@ -434,13 +493,28 @@ router.delete('/:id', auth, async (req, res) => {
             isAuthorized = true;
         } else {
             // Admin check
-            const { data: membership, error: memberError } = await supabase
+            let membership = null;
+            const { data: memberData, error: memberError } = await supabase
                 .from('company_members')
                 .select('company_id, role')
                 .eq('user_id', userId)
                 .single();
 
-            if (!memberError && membership && (membership.role === 'admin' || membership.role === 'owner')) {
+            if (memberData) {
+                membership = memberData;
+            } else {
+                // Fallback
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('company_id, role')
+                    .eq('id', userId)
+                    .single();
+                if (userData && userData.company_id) {
+                    membership = { company_id: userData.company_id, role: userData.role };
+                }
+            }
+
+            if (membership && (membership.role === 'admin' || membership.role === 'owner')) {
                 if (membership.company_id === project.company_id) {
                     isAuthorized = true;
                 }
@@ -481,13 +555,28 @@ router.post('/:id/members', auth, async (req, res) => {
         }
 
         // Check permission
-        const { data: membership, error: memberError } = await supabase
+        let membership = null;
+        const { data: memberData, error: memberError } = await supabase
             .from('company_members')
             .select('company_id, role')
             .eq('user_id', userId)
             .single();
 
-        if (memberError || !membership || (membership.role !== 'admin' && membership.role !== 'owner')) {
+        if (memberData) {
+            membership = memberData;
+        } else {
+            // Fallback
+            const { data: userData } = await supabase
+                .from('users')
+                .select('company_id, role')
+                .eq('id', userId)
+                .single();
+            if (userData && userData.company_id) {
+                membership = { company_id: userData.company_id, role: userData.role };
+            }
+        }
+
+        if (!membership || (membership.role !== 'admin' && membership.role !== 'owner')) {
             return res.status(403).json({ message: 'Access denied.' });
         }
 

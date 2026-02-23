@@ -1038,7 +1038,7 @@ async function sendConsolidatedSurveyEmail(recipients, survey, action, comment =
     
     let subject = '';
     let message = '';
-    const viewUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/survey`;
+    const viewUrl = 'https://server.matrixtwin.com/survey';
 
     // Separate executors and CCs for personalized messaging
     const executors = recipients.filter(r => r.role_in_workflow === 'executor' || r.role_in_workflow === 'admin');

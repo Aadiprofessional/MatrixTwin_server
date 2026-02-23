@@ -626,16 +626,79 @@ router.post('/:id/members', auth, async (req, res) => {
 router.get('/:id/members', auth, async (req, res) => {
     try {
         const supabase = req.supabase;
+        const userId = req.user.id;
+        const userRole = req.user.role;
         const projectId = req.params.id;
 
-        // RLS will handle visibility
+        // 1. Fetch project to get company_id
+        const { data: project, error: projectError } = await supabase
+            .from('projects')
+            .select('company_id')
+            .eq('id', projectId)
+            .single();
+
+        if (projectError || !project) {
+            return res.status(404).json({ message: 'Project not found' });
+        }
+
+        // 2. Check Permissions
+        let isAuthorized = false;
+
+        // a) Owner
+        if (userRole === 'owner') {
+            isAuthorized = true;
+        } 
+        // b) Admin of the company
+        else {
+             // Check company membership
+             const { data: membership } = await supabase
+                .from('company_members')
+                .select('role, company_id')
+                .eq('user_id', userId)
+                .single();
+            
+            if (membership && (membership.role === 'admin' || membership.role === 'owner') && membership.company_id === project.company_id) {
+                isAuthorized = true;
+            } else {
+                // Fallback check in users table
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('company_id, role')
+                    .eq('id', userId)
+                    .single();
+                
+                if (userData && userData.company_id === project.company_id && userData.role === 'admin') {
+                    isAuthorized = true;
+                }
+            }
+        }
+
+        // c) Member of the project
+        if (!isAuthorized) {
+            const { data: isMember } = await supabase
+                .from('project_members')
+                .select('id')
+                .eq('project_id', projectId)
+                .eq('user_id', userId)
+                .maybeSingle();
+            
+            if (isMember) {
+                isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        // 3. Fetch Members
         const { data, error } = await supabase
             .from('project_members')
             .select(`
                 user_id,
                 role,
                 joined_at,
-                user:user_id (id, name, email, avatar)
+                user:user_id (id, name, email, avatar, role)
             `)
             .eq('project_id', projectId);
 
@@ -690,6 +753,126 @@ router.delete('/:id/members/:memberId', auth, async (req, res) => {
         res.json({ message: 'Member removed' });
     } catch (err) {
         console.error('Error removing project member:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get staff allocation status for a project (Admin/Owner)
+router.get('/:id/staff-allocation', auth, async (req, res) => {
+    try {
+        const supabase = req.supabase;
+        const userId = req.user.id;
+        const projectId = req.params.id;
+
+        // 1. Get Project & Company Info
+        const { data: project, error: projectError } = await supabase
+            .from('projects')
+            .select('id, company_id, name')
+            .eq('id', projectId)
+            .single();
+
+        if (projectError || !project) {
+            return res.status(404).json({ message: 'Project not found' });
+        }
+
+        const companyId = project.company_id;
+
+        // 2. Permission Check (Admin/Owner only)
+        let isAuthorized = false;
+        if (req.user.role === 'owner') {
+            isAuthorized = true;
+        } else {
+            // Check if user is admin of this company
+            const { data: membership } = await supabase
+                .from('company_members')
+                .select('role, company_id')
+                .eq('user_id', userId)
+                .single();
+            
+            if (membership && (membership.role === 'admin' || membership.role === 'owner') && membership.company_id === companyId) {
+                isAuthorized = true;
+            } else {
+                 // Fallback: Check users table
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('company_id, role')
+                    .eq('id', userId)
+                    .single();
+                
+                if (userData && userData.company_id === companyId && userData.role === 'admin') {
+                    isAuthorized = true;
+                }
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ message: 'Access denied. Only Admins/Owners can view staff allocation.' });
+        }
+
+        // 3. Fetch all company members (potential staff)
+        // We need user details for all members of the company
+        const { data: companyMembers, error: membersError } = await supabase
+            .from('company_members')
+            .select(`
+                user_id,
+                role,
+                user:user_id (id, name, email, avatar, role)
+            `)
+            .eq('company_id', companyId);
+
+        if (membersError) throw membersError;
+
+        // Also fetch users who might be in users table but not company_members (edge case)
+        // For simplicity, we'll stick to company_members as the source of truth for "Staff"
+        
+        // 4. Fetch all project memberships for this company's projects
+        // We need to know which projects these users are assigned to
+        const { data: allProjectMemberships, error: projMemError } = await supabase
+            .from('project_members')
+            .select('project_id, user_id, role, projects!inner(company_id)')
+            .eq('projects.company_id', companyId);
+
+        if (projMemError) throw projMemError;
+
+        // 5. Categorize Users
+        const assignedToThisProject = [];
+        const assignedToOtherProjects = [];
+        const availableStaff = [];
+
+        // Map to store user's project assignments
+        const userProjectMap = {}; // userId -> [projectId1, projectId2]
+        allProjectMemberships.forEach(pm => {
+            if (!userProjectMap[pm.user_id]) {
+                userProjectMap[pm.user_id] = [];
+            }
+            userProjectMap[pm.user_id].push(pm.project_id);
+        });
+
+        companyMembers.forEach(member => {
+            const uid = member.user_id;
+            const user = member.user; // User details
+            
+            if (!user) return; // Skip if user details are missing
+
+            const projects = userProjectMap[uid] || [];
+
+            if (projects.includes(projectId)) {
+                assignedToThisProject.push(user);
+            } else if (projects.length > 0) {
+                assignedToOtherProjects.push(user);
+            } else {
+                availableStaff.push(user);
+            }
+        });
+
+        res.json({
+            assigned: assignedToThisProject,
+            available: availableStaff,
+            otherProjects: assignedToOtherProjects
+        });
+
+    } catch (err) {
+        console.error('Error fetching staff allocation:', err);
         res.status(500).json({ message: 'Server error' });
     }
 });

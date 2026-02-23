@@ -1176,13 +1176,12 @@ MatrixTwin Notification System
     console.log('Email recipients:', allEmails);
     console.log('Email message preview:', message.substring(0, 200) + '...');
 
-    const emailResult = await resend.emails.send({
-      from: 'MatrixTwin <noreply@matrixtwin.com>',
-      to: allEmails,
-      subject: subject,
-      text: message,
-      html: message.replace(/\n/g, '<br>')
-    });
+    const emailResult = await sendEmail(
+      allEmails,
+      subject,
+      message,
+      message.replace(/\n/g, '<br>')
+    );
 
     console.log('Email send result:', emailResult);
     console.log(`Consolidated email sent successfully to ${allEmails.length} recipients for survey ${survey.id}`);

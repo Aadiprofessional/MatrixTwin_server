@@ -1,21 +1,33 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const { Resend } = require('resend');
 const { createFormAssignmentNotifications } = require('./notifications');
-
-// Initialize Resend with API key
-const resend = new Resend('re_CYa5oG13_ECrEJT5L42u1VydajXWK6W8s');
+const { sendEmail } = require('../utils/email');
 
 // Middleware to temporarily disable RLS for safety operations
 const disableRLS = async (req, res, next) => {
   try {
     // Create a new supabase client with service role key for bypassing RLS
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://ahtardktcamfwgjuwmeb.supabase.co';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMjE4NzI5NCwiZXhwIjoyMDQ3NzYzMjk0fQ.YCJJhJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJG';
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
     
-    req.supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+    if (!supabaseUrl) {
+      throw new Error('Missing Supabase URL');
+    }
+
+    const keyToUse = serviceKey || anonKey;
+
+    if (!keyToUse) {
+      throw new Error('Missing Supabase key (Service Role or Anon)');
+    }
+
+    if (!serviceKey) {
+      console.warn('SUPABASE_SERVICE_ROLE_KEY not found. Using Anon key. RLS bypass may not work.');
+    }
+    
+    req.supabaseAdmin = createClient(supabaseUrl, keyToUse, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
@@ -1026,7 +1038,7 @@ async function sendConsolidatedSafetyEmail(recipients, safety, action, comment =
     
     let subject = '';
     let message = '';
-    const viewUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/safety`;
+    const viewUrl = 'https://server.matrixtwin.com/safety';
 
     // Separate executors and CCs for personalized messaging
     const executors = recipients.filter(r => r.role_in_workflow === 'executor' || r.role_in_workflow === 'admin');
@@ -1163,13 +1175,12 @@ MatrixTwin Notification System
     console.log('Email recipients:', allEmails);
     console.log('Email message preview:', message.substring(0, 200) + '...');
 
-    const emailResult = await resend.emails.send({
-      from: 'MatrixTwin <noreply@matrixtwin.com>',
-      to: allEmails,
-      subject: subject,
-      text: message,
-      html: message.replace(/\n/g, '<br>')
-    });
+    const emailResult = await sendEmail(
+      allEmails,
+      subject,
+      message,
+      message.replace(/\n/g, '<br>')
+    );
 
     console.log('Email send result:', emailResult);
     console.log(`Consolidated email sent successfully to ${allEmails.length} recipients for safety ${safety.id}`);

@@ -59,8 +59,17 @@ router.post(
 
       // Use service role client if available to bypass RLS for insertion
       let dbClient = supabase;
-      if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-          dbClient = createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      
+      if (serviceKey && supabaseUrl) {
+          try {
+              dbClient = createSupabaseClient(supabaseUrl, serviceKey);
+          } catch (e) {
+              console.warn('Failed to create service role client, falling back to user client:', e.message);
+          }
+      } else {
+          console.warn('SUPABASE_SERVICE_ROLE_KEY not found. Using user client. RLS bypass may not work.');
       }
 
       // 3. Create Request

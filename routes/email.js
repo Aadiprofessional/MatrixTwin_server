@@ -1,9 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Resend } = require('resend');
-
-// Initialize Resend with API key
-const resend = new Resend('re_CYa5oG13_ECrEJT5L42u1VydajXWK6W8s');
+const { sendEmail } = require('../utils/email');
 
 // Send email endpoint
 router.post('/send', async (req, res) => {
@@ -25,34 +22,25 @@ router.post('/send', async (req, res) => {
             });
         }
 
-        // Send email using Resend
-        const { data, error } = await resend.emails.send({
-            from: 'MatrixTwin <noreply@matrixtwin.com>', // Default from address for testing
-            to: [email],
-            subject: subject || 'Message from MatrixTwin',
-            text: text,
-            html: `<p>${text.replace(/\n/g, '<br>')}</p>` // Convert line breaks to HTML
-        });
-
-        if (error) {
-            console.error('Resend error:', error);
-            return res.status(500).json({ 
-                error: 'Failed to send email',
-                details: error.message 
-            });
-        }
+        // Send email using SMTP
+        const info = await sendEmail(
+            email,
+            subject || 'Message from MatrixTwin',
+            text,
+            `<p>${text.replace(/\n/g, '<br>')}</p>`
+        );
 
         res.status(200).json({
             success: true,
             message: 'Email sent successfully',
-            emailId: data.id,
+            emailId: info.messageId,
             sentTo: email
         });
 
     } catch (error) {
         console.error('Email sending error:', error);
         res.status(500).json({ 
-            error: 'Internal server error',
+            error: 'Failed to send email',
             details: error.message 
         });
     }

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
+const { sendEmail } = require('../utils/email');
 
 // Polyfill for Headers if not available (Node.js < 18)
 if (typeof Headers === 'undefined') {
@@ -44,20 +45,31 @@ if (typeof Headers === 'undefined') {
   };
 }
 
-const { Resend } = require('resend');
 const { createFormAssignmentNotifications } = require('./notifications');
-
-// Initialize Resend with API key
-const resend = new Resend('re_CYa5oG13_ECrEJT5L42u1VydajXWK6W8s');
 
 // Middleware to temporarily disable RLS for form operations
 const disableRLS = async (req, res, next) => {
   try {
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://supabase.matrixaiserver.com';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error('Missing Supabase URL');
+    }
+
+    const keyToUse = serviceKey || anonKey;
     
-    req.supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+    if (!keyToUse) {
+      throw new Error('Missing Supabase key (Service Role or Anon)');
+    }
+
+    if (!serviceKey) {
+      console.warn('SUPABASE_SERVICE_ROLE_KEY not found. Using Anon key. RLS bypass may not work.');
+    }
+    
+    req.supabaseAdmin = createClient(supabaseUrl, keyToUse, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
@@ -1023,13 +1035,12 @@ MatrixTwin Notification System
 
     const allEmails = recipients.map(r => r.email);
 
-    const emailResult = await resend.emails.send({
-      from: 'MatrixTwin <noreply@matrixtwin.com>',
-      to: allEmails,
-      subject: subject,
-      text: message,
-      html: message.replace(/\n/g, '<br>')
-    });
+    const emailResult = await sendEmail(
+      allEmails,
+      subject,
+      message,
+      message.replace(/\n/g, '<br>')
+    );
 
     console.log(`Consolidated email sent successfully to ${allEmails.length} recipients for form ${entry.id}`);
 

@@ -140,30 +140,37 @@ router.post(
                 // We use a scoped client if the user is authenticated (session available)
                 // If not, we fall back to RPC or simply fail gracefully (user confirms email first)
                 if (authData.session) {
-                    const userClient = createClient(
-                        process.env.SUPABASE_URL,
-                        process.env.SUPABASE_ANON_KEY,
-                        {
-                            global: {
-                                headers: {
-                                    Authorization: `Bearer ${authData.session.access_token}`
+                    const supabaseUrl = process.env.SUPABASE_URL;
+                    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+                    
+                    if (!supabaseUrl || !supabaseAnonKey) {
+                        console.error('Missing Supabase URL or Anon Key for user client creation');
+                    } else {
+                        const userClient = createClient(
+                            supabaseUrl,
+                            supabaseAnonKey,
+                            {
+                                global: {
+                                    headers: {
+                                        Authorization: `Bearer ${authData.session.access_token}`
+                                    }
                                 }
                             }
+                        );
+                        
+                        const { error: joinError } = await userClient
+                            .from('company_join_requests')
+                            .insert({
+                                company_id: companyId,
+                                user_id: authData.user.id,
+                                status: 'pending'
+                            });
+                        
+                        if (joinError) {
+                            console.error('Error creating join request with user session:', joinError);
+                        } else {
+                            console.log('Join request created successfully for user:', authData.user.id);
                         }
-                    );
-                    
-                    const { error: joinError } = await userClient
-                        .from('company_join_requests')
-                        .insert({
-                            company_id: companyId,
-                            user_id: authData.user.id,
-                            status: 'pending'
-                        });
-                    
-                    if (joinError) {
-                        console.error('Error creating join request with user session:', joinError);
-                    } else {
-                        console.log('Join request created successfully for user:', authData.user.id);
                     }
                 } else {
                     // Try using RPC if no session (e.g. email confirm required)

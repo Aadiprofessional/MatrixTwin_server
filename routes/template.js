@@ -1,20 +1,32 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const { Resend } = require('resend');
-
-// Initialize Resend with API key
-const resend = new Resend('re_CYa5oG13_ECrEJT5L42u1VydajXWK6W8s');
+const { sendEmail } = require('../utils/email');
 
 // Middleware to temporarily disable RLS for template operations
 const disableRLS = async (req, res, next) => {
   try {
     // Create a new supabase client with service role key for bypassing RLS
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://ahtardktcamfwgjuwmeb.supabase.co';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMjE4NzI5NCwiZXhwIjoyMDQ3NzYzMjk0fQ.YCJJhJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJGJJG';
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error('Missing Supabase URL');
+    }
+
+    const keyToUse = serviceKey || anonKey;
     
-    req.supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+    if (!keyToUse) {
+      throw new Error('Missing Supabase key (Service Role or Anon)');
+    }
+
+    if (!serviceKey) {
+      console.warn('SUPABASE_SERVICE_ROLE_KEY not found. Using Anon key. RLS bypass may not work.');
+    }
+    
+    req.supabaseAdmin = createClient(supabaseUrl, keyToUse, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
@@ -563,12 +575,12 @@ async function sendTemplateEmail(user, templateEntry, action, comment = '') {
       </div>
     `;
 
-    await resend.emails.send({
-      from: 'BuildSphere <noreply@buildsphere.com>',
-      to: [user.email],
-      subject: subject,
-      html: html
-    });
+    await sendEmail(
+      user.email,
+      subject,
+      'Please view this email in a client that supports HTML.',
+      html
+    );
 
     console.log(`Template notification email sent to ${user.email}`);
 

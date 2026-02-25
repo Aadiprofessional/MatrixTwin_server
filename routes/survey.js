@@ -1,21 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const { Resend } = require('resend');
 const { createFormAssignmentNotifications } = require('./notifications');
-
-// Initialize Resend with API key
-const resend = new Resend('re_CYa5oG13_ECrEJT5L42u1VydajXWK6W8s');
 
 // Middleware to temporarily disable RLS for survey operations
 const disableRLS = async (req, res, next) => {
   try {
-    // Create a new supabase client with service role key for bypassing RLS
     const { createClient } = require('@supabase/supabase-js');
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://supabase.matrixaiserver.com';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error('Missing Supabase URL');
+    }
+
+    const keyToUse = serviceKey || anonKey;
     
-    req.supabaseAdmin = createClient(supabaseUrl, serviceKey, {
+    if (!keyToUse) {
+      throw new Error('Missing Supabase key (Service Role or Anon)');
+    }
+
+    if (!serviceKey) {
+      console.warn('SUPABASE_SERVICE_ROLE_KEY not found. Using Anon key. RLS bypass may not work.');
+    }
+    
+    req.supabaseAdmin = createClient(supabaseUrl, keyToUse, {
       auth: {
         autoRefreshToken: false,
         persistSession: false

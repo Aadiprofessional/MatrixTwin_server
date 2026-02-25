@@ -63,18 +63,23 @@ if (process.env.NODE_ENV !== 'production') {
 // Supabase client middleware
 app.use((req, res, next) => {
   try {
-    const supabaseUrl = process.env.SUPABASE_URL || 'https://supabase.matrixaiserver.com';
+    const supabaseUrl = process.env.SUPABASE_URL;
     
     // Use service role key for database operations to bypass RLS
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     
-    console.log('Supabase client configuration:', {
-      url: supabaseUrl,
-      keyType: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON'
-    });
-    
-    req.supabase = createSupabaseClient(supabaseUrl, supabaseKey);
-    console.log('Supabase client created successfully');
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('Missing Supabase URL or Key');
+      // We don't throw here to allow health checks to pass, but downstream usage will fail
+    } else {
+      console.log('Supabase client configuration:', {
+        url: supabaseUrl,
+        keyType: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON'
+      });
+      
+      req.supabase = createSupabaseClient(supabaseUrl, supabaseKey);
+      console.log('Supabase client created successfully');
+    }
     next();
   } catch (error) {
     console.error('Supabase client error:', error);

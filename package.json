@@ -33,7 +33,6 @@
     "nodemailer": "^8.0.1",
     "postgres": "^3.4.5",
     "redis": "^4.6.13",
-    "resend": "^4.6.0",
     "serverless-http": "^3.2.0",
     "uuid": "^11.1.0"
   },

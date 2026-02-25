@@ -1,0 +1,498 @@
+table_name,column_name,data_type,is_nullable,column_default
+admin_requests,id,uuid,NO,gen_random_uuid()
+admin_requests,user_id,uuid,YES,null
+admin_requests,status,text,YES,'pending'::text
+admin_requests,requested_at,timestamp with time zone,YES,now()
+admin_requests,updated_at,timestamp with time zone,YES,now()
+admin_requests,company_name,text,NO,null
+admin_requests,company_details,jsonb,YES,'{}'::jsonb
+admin_requests,rejection_reason,text,YES,null
+chat_messages,id,uuid,NO,gen_random_uuid()
+chat_messages,session_id,uuid,NO,null
+chat_messages,content,text,NO,null
+chat_messages,sender,text,NO,null
+chat_messages,image_url,text,YES,null
+chat_messages,timestamp,timestamp with time zone,YES,now()
+chat_messages,is_streaming,boolean,YES,false
+chat_sessions,id,uuid,NO,gen_random_uuid()
+chat_sessions,user_id,uuid,NO,null
+chat_sessions,project_id,text,YES,null
+chat_sessions,title,text,NO,null
+chat_sessions,created_at,timestamp with time zone,YES,now()
+chat_sessions,last_updated_at,timestamp with time zone,YES,now()
+cleansing_assignments,id,uuid,NO,gen_random_uuid()
+cleansing_assignments,cleansing_id,text,YES,null
+cleansing_assignments,user_id,uuid,YES,null
+cleansing_assignments,user_name,text,YES,null
+cleansing_assignments,user_email,text,YES,null
+cleansing_assignments,role,text,YES,null
+cleansing_assignments,node_id,text,YES,null
+cleansing_assignments,node_order,integer,YES,null
+cleansing_assignments,created_at,timestamp with time zone,YES,now()
+cleansing_comments,id,uuid,NO,gen_random_uuid()
+cleansing_comments,cleansing_id,text,YES,null
+cleansing_comments,user_id,uuid,YES,null
+cleansing_comments,user_name,text,YES,null
+cleansing_comments,content,text,YES,null
+cleansing_comments,created_at,timestamp with time zone,YES,now()
+cleansing_entries,id,text,NO,null
+cleansing_entries,date,date,YES,null
+cleansing_entries,project,text,YES,null
+cleansing_entries,project_id,text,YES,null
+cleansing_entries,inspector,text,YES,null
+cleansing_entries,area,text,YES,null
+cleansing_entries,cleanliness_score,integer,YES,null
+cleansing_entries,cleaning_status,text,YES,'pending'::text
+cleansing_entries,areas_cleaned,text,YES,null
+cleansing_entries,waste_removed,text,YES,null
+cleansing_entries,notes,text,YES,null
+cleansing_entries,form_data,jsonb,YES,null
+cleansing_entries,created_by,uuid,YES,null
+cleansing_entries,created_at,timestamp with time zone,YES,now()
+cleansing_entries,updated_at,timestamp with time zone,YES,null
+cleansing_entries,completed_at,timestamp with time zone,YES,null
+cleansing_entries,status,text,YES,'pending'::text
+cleansing_entries,current_node_index,integer,YES,1
+cleansing_entries,current_active_node,text,YES,null
+cleansing_workflow_history,id,uuid,NO,gen_random_uuid()
+cleansing_workflow_history,cleansing_id,text,YES,null
+cleansing_workflow_history,action,text,YES,null
+cleansing_workflow_history,actor_id,uuid,YES,null
+cleansing_workflow_history,actor_name,text,YES,null
+cleansing_workflow_history,previous_status,text,YES,null
+cleansing_workflow_history,new_status,text,YES,null
+cleansing_workflow_history,comments,text,YES,null
+cleansing_workflow_history,created_at,timestamp with time zone,YES,now()
+cleansing_workflow_nodes,id,uuid,NO,gen_random_uuid()
+cleansing_workflow_nodes,cleansing_id,text,YES,null
+cleansing_workflow_nodes,node_id,text,YES,null
+cleansing_workflow_nodes,node_type,text,YES,null
+cleansing_workflow_nodes,node_name,text,YES,null
+cleansing_workflow_nodes,executor_id,uuid,YES,null
+cleansing_workflow_nodes,executor_name,text,YES,null
+cleansing_workflow_nodes,node_order,integer,YES,null
+cleansing_workflow_nodes,status,text,YES,'pending'::text
+cleansing_workflow_nodes,edit_access,boolean,YES,true
+cleansing_workflow_nodes,settings,jsonb,YES,'{}'::jsonb
+cleansing_workflow_nodes,expire_time,timestamp with time zone,YES,null
+cleansing_workflow_nodes,expire_duration,integer,YES,null
+cleansing_workflow_nodes,created_at,timestamp with time zone,YES,now()
+cleansing_workflow_nodes,updated_at,timestamp with time zone,YES,null
+companies,id,uuid,NO,gen_random_uuid()
+companies,name,text,NO,null
+companies,details,jsonb,YES,'{}'::jsonb
+companies,admin_id,uuid,YES,null
+companies,created_at,timestamp with time zone,YES,now()
+companies,updated_at,timestamp with time zone,YES,now()
+companies,code,text,YES,null
+companies,created_by,uuid,YES,null
+company_join_requests,id,uuid,NO,gen_random_uuid()
+company_join_requests,company_id,uuid,NO,null
+company_join_requests,user_id,uuid,NO,null
+company_join_requests,status,text,NO,'pending'::text
+company_join_requests,created_at,timestamp with time zone,YES,now()
+company_join_requests,updated_at,timestamp with time zone,YES,now()
+company_members,id,uuid,NO,gen_random_uuid()
+company_members,company_id,uuid,NO,null
+company_members,user_id,uuid,NO,null
+company_members,role,text,NO,'member'::text
+company_members,joined_at,timestamp with time zone,YES,now()
+diary_assignments,id,uuid,NO,uuid_generate_v4()
+diary_assignments,diary_id,text,YES,null
+diary_assignments,user_id,uuid,YES,null
+diary_assignments,user_name,text,YES,null
+diary_assignments,user_email,text,YES,null
+diary_assignments,role,text,YES,'cc'::text
+diary_assignments,node_id,text,YES,null
+diary_assignments,node_order,integer,YES,null
+diary_assignments,created_at,timestamp with time zone,YES,now()
+diary_comments,id,uuid,NO,uuid_generate_v4()
+diary_comments,diary_id,text,YES,null
+diary_comments,user_id,uuid,YES,null
+diary_comments,user_name,text,YES,null
+diary_comments,comment,text,YES,null
+diary_comments,action,text,YES,null
+diary_comments,created_at,timestamp with time zone,YES,now()
+diary_entries,id,text,NO,null
+diary_entries,date,date,YES,null
+diary_entries,project,text,YES,null
+diary_entries,project_id,text,YES,null
+diary_entries,author,text,YES,null
+diary_entries,weather,text,YES,null
+diary_entries,temperature,text,YES,null
+diary_entries,work_completed,text,YES,null
+diary_entries,incidents_reported,text,YES,null
+diary_entries,materials_delivered,text,YES,null
+diary_entries,notes,text,YES,null
+diary_entries,form_data,jsonb,YES,null
+diary_entries,created_by,uuid,YES,null
+diary_entries,created_at,timestamp with time zone,YES,now()
+diary_entries,updated_at,timestamp with time zone,YES,null
+diary_entries,completed_at,timestamp with time zone,YES,null
+diary_entries,status,text,YES,'pending'::text
+diary_entries,current_node_index,integer,YES,1
+diary_entries,current_active_node,text,YES,null
+diary_workflow_history,id,uuid,NO,uuid_generate_v4()
+diary_workflow_history,diary_id,text,YES,null
+diary_workflow_history,node_id,text,YES,null
+diary_workflow_history,node_order,integer,YES,null
+diary_workflow_history,action,text,YES,null
+diary_workflow_history,user_id,uuid,YES,null
+diary_workflow_history,user_name,text,YES,null
+diary_workflow_history,comment,text,YES,null
+diary_workflow_history,created_at,timestamp with time zone,YES,now()
+diary_workflow_nodes,id,uuid,NO,uuid_generate_v4()
+diary_workflow_nodes,diary_id,text,YES,null
+diary_workflow_nodes,node_id,text,YES,null
+diary_workflow_nodes,node_type,text,YES,null
+diary_workflow_nodes,node_name,text,YES,null
+diary_workflow_nodes,executor_id,uuid,YES,null
+diary_workflow_nodes,executor_name,text,YES,null
+diary_workflow_nodes,node_order,integer,YES,null
+diary_workflow_nodes,status,text,YES,'waiting'::text
+diary_workflow_nodes,edit_access,boolean,YES,true
+diary_workflow_nodes,settings,jsonb,YES,'{}'::jsonb
+diary_workflow_nodes,expire_time,timestamp with time zone,YES,null
+diary_workflow_nodes,expire_duration,text,YES,null
+diary_workflow_nodes,created_at,timestamp with time zone,YES,now()
+diary_workflow_nodes,completed_by,uuid,YES,null
+diary_workflow_nodes,completed_at,timestamp with time zone,YES,null
+diary_workflow_nodes,completion_count,integer,YES,0
+diary_workflow_nodes,last_completed_at,timestamp with time zone,YES,null
+diary_workflow_nodes,can_re_edit,boolean,YES,true
+diary_workflow_nodes,max_completions,integer,YES,2
+inspection_assignments,id,uuid,NO,gen_random_uuid()
+inspection_assignments,inspection_id,text,YES,null
+inspection_assignments,user_id,uuid,YES,null
+inspection_assignments,user_name,text,YES,null
+inspection_assignments,user_email,text,YES,null
+inspection_assignments,role,text,YES,'cc'::text
+inspection_assignments,node_id,text,YES,null
+inspection_assignments,node_order,integer,YES,null
+inspection_assignments,created_at,timestamp with time zone,YES,now()
+inspection_comments,id,uuid,NO,gen_random_uuid()
+inspection_comments,inspection_id,text,YES,null
+inspection_comments,user_id,uuid,YES,null
+inspection_comments,user_name,text,YES,null
+inspection_comments,comment,text,YES,null
+inspection_comments,action,text,YES,null
+inspection_comments,created_at,timestamp with time zone,YES,now()
+inspection_entries,id,text,NO,null
+inspection_entries,date,date,YES,null
+inspection_entries,project,text,YES,null
+inspection_entries,project_id,text,YES,null
+inspection_entries,inspector,text,YES,null
+inspection_entries,contract_no,text,YES,null
+inspection_entries,risc_no,text,YES,null
+inspection_entries,revision,text,YES,null
+inspection_entries,supervisor,text,YES,null
+inspection_entries,attention,text,YES,null
+inspection_entries,location,text,YES,null
+inspection_entries,works_to_be_inspected,text,YES,null
+inspection_entries,works_category,text,YES,null
+inspection_entries,inspection_time,text,YES,null
+inspection_entries,next_operation,text,YES,null
+inspection_entries,general_cleaning,text,YES,null
+inspection_entries,scheduled_time,text,YES,null
+inspection_entries,scheduled_date,date,YES,null
+inspection_entries,equipment,text,YES,null
+inspection_entries,no_objection,boolean,YES,false
+inspection_entries,deficiencies_noted,boolean,YES,false
+inspection_entries,deficiencies,jsonb,YES,'[]'::jsonb
+inspection_entries,form_data,jsonb,YES,'{}'::jsonb
+inspection_entries,created_by,uuid,YES,null
+inspection_entries,created_at,timestamp with time zone,YES,now()
+inspection_entries,updated_at,timestamp with time zone,YES,null
+inspection_entries,completed_at,timestamp with time zone,YES,null
+inspection_entries,status,text,YES,'pending'::text
+inspection_entries,current_node_index,integer,YES,1
+inspection_entries,current_active_node,text,YES,null
+inspection_workflow_history,id,uuid,NO,gen_random_uuid()
+inspection_workflow_history,inspection_id,text,YES,null
+inspection_workflow_history,node_id,text,YES,null
+inspection_workflow_history,node_order,integer,YES,null
+inspection_workflow_history,action,text,YES,null
+inspection_workflow_history,user_id,uuid,YES,null
+inspection_workflow_history,user_name,text,YES,null
+inspection_workflow_history,comment,text,YES,null
+inspection_workflow_history,created_at,timestamp with time zone,YES,now()
+inspection_workflow_nodes,id,uuid,NO,gen_random_uuid()
+inspection_workflow_nodes,inspection_id,text,YES,null
+inspection_workflow_nodes,node_id,text,YES,null
+inspection_workflow_nodes,node_type,text,YES,null
+inspection_workflow_nodes,node_name,text,YES,null
+inspection_workflow_nodes,executor_id,uuid,YES,null
+inspection_workflow_nodes,executor_name,text,YES,null
+inspection_workflow_nodes,node_order,integer,YES,null
+inspection_workflow_nodes,status,text,YES,'pending'::text
+inspection_workflow_nodes,edit_access,boolean,YES,true
+inspection_workflow_nodes,settings,jsonb,YES,'{}'::jsonb
+inspection_workflow_nodes,expire_time,timestamp with time zone,YES,null
+inspection_workflow_nodes,expire_duration,integer,YES,null
+inspection_workflow_nodes,completed_by,uuid,YES,null
+inspection_workflow_nodes,completed_at,timestamp with time zone,YES,null
+inspection_workflow_nodes,completion_count,integer,YES,0
+inspection_workflow_nodes,last_completed_at,timestamp with time zone,YES,null
+inspection_workflow_nodes,can_re_edit,boolean,YES,true
+inspection_workflow_nodes,created_at,timestamp with time zone,YES,now()
+labour_assignments,id,uuid,NO,gen_random_uuid()
+labour_assignments,labour_id,text,YES,null
+labour_assignments,user_id,uuid,YES,null
+labour_assignments,user_name,text,YES,null
+labour_assignments,user_email,text,YES,null
+labour_assignments,role,text,YES,null
+labour_assignments,node_id,text,YES,null
+labour_assignments,node_order,integer,YES,null
+labour_assignments,created_at,timestamp with time zone,YES,now()
+labour_comments,id,uuid,NO,gen_random_uuid()
+labour_comments,labour_id,text,YES,null
+labour_comments,user_id,uuid,YES,null
+labour_comments,user_name,text,YES,null
+labour_comments,content,text,YES,null
+labour_comments,created_at,timestamp with time zone,YES,now()
+labour_entries,id,text,NO,null
+labour_entries,date,date,YES,null
+labour_entries,project,text,YES,null
+labour_entries,project_id,text,YES,null
+labour_entries,submitter,text,YES,null
+labour_entries,labour_type,text,YES,null
+labour_entries,trade_type,text,YES,null
+labour_entries,number_of_workers,integer,YES,null
+labour_entries,hours_worked,numeric,YES,null
+labour_entries,work_description,text,YES,null
+labour_entries,notes,text,YES,null
+labour_entries,form_data,jsonb,YES,null
+labour_entries,created_by,uuid,YES,null
+labour_entries,created_at,timestamp with time zone,YES,now()
+labour_entries,updated_at,timestamp with time zone,YES,null
+labour_entries,completed_at,timestamp with time zone,YES,null
+labour_entries,status,text,YES,'pending'::text
+labour_entries,current_node_index,integer,YES,1
+labour_entries,current_active_node,text,YES,null
+labour_workflow_history,id,uuid,NO,gen_random_uuid()
+labour_workflow_history,labour_id,text,YES,null
+labour_workflow_history,action,text,YES,null
+labour_workflow_history,actor_id,uuid,YES,null
+labour_workflow_history,actor_name,text,YES,null
+labour_workflow_history,previous_status,text,YES,null
+labour_workflow_history,new_status,text,YES,null
+labour_workflow_history,comments,text,YES,null
+labour_workflow_history,created_at,timestamp with time zone,YES,now()
+labour_workflow_nodes,id,uuid,NO,gen_random_uuid()
+labour_workflow_nodes,labour_id,text,YES,null
+labour_workflow_nodes,node_id,text,YES,null
+labour_workflow_nodes,node_type,text,YES,null
+labour_workflow_nodes,node_name,text,YES,null
+labour_workflow_nodes,executor_id,uuid,YES,null
+labour_workflow_nodes,executor_name,text,YES,null
+labour_workflow_nodes,node_order,integer,YES,null
+labour_workflow_nodes,status,text,YES,'pending'::text
+labour_workflow_nodes,edit_access,boolean,YES,true
+labour_workflow_nodes,settings,jsonb,YES,'{}'::jsonb
+labour_workflow_nodes,expire_time,timestamp with time zone,YES,null
+labour_workflow_nodes,expire_duration,integer,YES,null
+labour_workflow_nodes,created_at,timestamp with time zone,YES,now()
+labour_workflow_nodes,updated_at,timestamp with time zone,YES,null
+notifications,id,text,NO,null
+notifications,user_id,uuid,YES,null
+notifications,title,text,YES,null
+notifications,message,text,YES,null
+notifications,type,text,YES,null
+notifications,form_type,text,YES,null
+notifications,form_id,text,YES,null
+notifications,project_id,text,YES,null
+notifications,action_url,text,YES,null
+notifications,metadata,jsonb,YES,'{}'::jsonb
+notifications,read,boolean,YES,false
+notifications,read_at,timestamp with time zone,YES,null
+notifications,created_at,timestamp with time zone,YES,now()
+project_members,project_id,uuid,NO,null
+project_members,user_id,uuid,NO,null
+project_members,role,text,YES,'member'::text
+project_members,joined_at,timestamp with time zone,YES,now()
+projects,id,uuid,NO,gen_random_uuid()
+projects,company_id,uuid,NO,null
+projects,name,text,NO,null
+projects,description,text,YES,null
+projects,status,text,YES,'upcoming'::text
+projects,location,text,YES,null
+projects,client,text,YES,null
+projects,deadline,timestamp with time zone,YES,null
+projects,image_url,text,YES,null
+projects,created_by,uuid,YES,null
+projects,created_at,timestamp with time zone,YES,now()
+projects,updated_at,timestamp with time zone,YES,now()
+safety_assignments,id,uuid,NO,gen_random_uuid()
+safety_assignments,safety_id,text,YES,null
+safety_assignments,user_id,uuid,YES,null
+safety_assignments,user_name,text,YES,null
+safety_assignments,user_email,text,YES,null
+safety_assignments,role,text,YES,null
+safety_assignments,node_id,text,YES,null
+safety_assignments,node_order,integer,YES,null
+safety_assignments,created_at,timestamp with time zone,YES,now()
+safety_comments,id,uuid,NO,gen_random_uuid()
+safety_comments,safety_id,text,YES,null
+safety_comments,user_id,uuid,YES,null
+safety_comments,user_name,text,YES,null
+safety_comments,content,text,YES,null
+safety_comments,created_at,timestamp with time zone,YES,now()
+safety_entries,id,text,NO,null
+safety_entries,date,date,YES,null
+safety_entries,project,text,YES,null
+safety_entries,project_id,text,YES,null
+safety_entries,inspector,text,YES,null
+safety_entries,inspection_type,text,YES,null
+safety_entries,safety_score,integer,YES,null
+safety_entries,findings_count,integer,YES,null
+safety_entries,incidents_reported,text,YES,null
+safety_entries,corrective_actions,text,YES,null
+safety_entries,notes,text,YES,null
+safety_entries,form_data,jsonb,YES,null
+safety_entries,created_by,uuid,YES,null
+safety_entries,created_at,timestamp with time zone,YES,now()
+safety_entries,updated_at,timestamp with time zone,YES,null
+safety_entries,completed_at,timestamp with time zone,YES,null
+safety_entries,status,text,YES,'pending'::text
+safety_entries,current_node_index,integer,YES,1
+safety_entries,current_active_node,text,YES,null
+safety_workflow_history,id,uuid,NO,gen_random_uuid()
+safety_workflow_history,safety_id,text,YES,null
+safety_workflow_history,action,text,YES,null
+safety_workflow_history,actor_id,uuid,YES,null
+safety_workflow_history,actor_name,text,YES,null
+safety_workflow_history,previous_status,text,YES,null
+safety_workflow_history,new_status,text,YES,null
+safety_workflow_history,comments,text,YES,null
+safety_workflow_history,created_at,timestamp with time zone,YES,now()
+safety_workflow_nodes,id,uuid,NO,gen_random_uuid()
+safety_workflow_nodes,safety_id,text,YES,null
+safety_workflow_nodes,node_id,text,YES,null
+safety_workflow_nodes,node_type,text,YES,null
+safety_workflow_nodes,node_name,text,YES,null
+safety_workflow_nodes,executor_id,uuid,YES,null
+safety_workflow_nodes,executor_name,text,YES,null
+safety_workflow_nodes,node_order,integer,YES,null
+safety_workflow_nodes,status,text,YES,'pending'::text
+safety_workflow_nodes,edit_access,boolean,YES,true
+safety_workflow_nodes,settings,jsonb,YES,'{}'::jsonb
+safety_workflow_nodes,expire_time,timestamp with time zone,YES,null
+safety_workflow_nodes,expire_duration,integer,YES,null
+safety_workflow_nodes,created_at,timestamp with time zone,YES,now()
+safety_workflow_nodes,updated_at,timestamp with time zone,YES,null
+survey_assignments,id,uuid,NO,gen_random_uuid()
+survey_assignments,survey_id,text,YES,null
+survey_assignments,user_id,uuid,YES,null
+survey_assignments,user_name,text,YES,null
+survey_assignments,user_email,text,YES,null
+survey_assignments,role,text,YES,'cc'::text
+survey_assignments,node_id,text,YES,null
+survey_assignments,node_order,integer,YES,null
+survey_assignments,created_at,timestamp with time zone,YES,now()
+survey_comments,id,uuid,NO,gen_random_uuid()
+survey_comments,survey_id,text,YES,null
+survey_comments,user_id,uuid,YES,null
+survey_comments,user_name,text,YES,null
+survey_comments,comment,text,YES,null
+survey_comments,action,text,YES,null
+survey_comments,created_at,timestamp with time zone,YES,now()
+survey_entries,id,text,NO,null
+survey_entries,date,date,YES,null
+survey_entries,project,text,YES,null
+survey_entries,project_id,text,YES,null
+survey_entries,surveyor,text,YES,null
+survey_entries,contract_no,text,YES,null
+survey_entries,risc_no,text,YES,null
+survey_entries,revision,text,YES,null
+survey_entries,supervisor,text,YES,null
+survey_entries,attention,text,YES,null
+survey_entries,location,text,YES,null
+survey_entries,survey_field,text,YES,null
+survey_entries,works_category,text,YES,null
+survey_entries,survey_time,text,YES,null
+survey_entries,next_operation,text,YES,null
+survey_entries,scheduled_time,text,YES,null
+survey_entries,scheduled_date,date,YES,null
+survey_entries,equipment,text,YES,null
+survey_entries,no_objection,boolean,YES,false
+survey_entries,deficiencies_noted,boolean,YES,false
+survey_entries,deficiencies,jsonb,YES,'[]'::jsonb
+survey_entries,form_data,jsonb,YES,'{}'::jsonb
+survey_entries,created_by,uuid,YES,null
+survey_entries,created_at,timestamp with time zone,YES,now()
+survey_entries,updated_at,timestamp with time zone,YES,null
+survey_entries,completed_at,timestamp with time zone,YES,null
+survey_entries,status,text,YES,'pending'::text
+survey_entries,current_node_index,integer,YES,1
+survey_entries,current_active_node,text,YES,null
+survey_workflow_history,id,uuid,NO,gen_random_uuid()
+survey_workflow_history,survey_id,text,YES,null
+survey_workflow_history,node_id,text,YES,null
+survey_workflow_history,node_order,integer,YES,null
+survey_workflow_history,action,text,YES,null
+survey_workflow_history,user_id,uuid,YES,null
+survey_workflow_history,user_name,text,YES,null
+survey_workflow_history,comment,text,YES,null
+survey_workflow_history,created_at,timestamp with time zone,YES,now()
+survey_workflow_nodes,id,uuid,NO,gen_random_uuid()
+survey_workflow_nodes,survey_id,text,YES,null
+survey_workflow_nodes,node_id,text,YES,null
+survey_workflow_nodes,node_type,text,YES,null
+survey_workflow_nodes,node_name,text,YES,null
+survey_workflow_nodes,executor_id,uuid,YES,null
+survey_workflow_nodes,executor_name,text,YES,null
+survey_workflow_nodes,node_order,integer,YES,null
+survey_workflow_nodes,status,text,YES,'pending'::text
+survey_workflow_nodes,edit_access,boolean,YES,true
+survey_workflow_nodes,settings,jsonb,YES,'{}'::jsonb
+survey_workflow_nodes,expire_time,timestamp with time zone,YES,null
+survey_workflow_nodes,expire_duration,integer,YES,null
+survey_workflow_nodes,completed_by,uuid,YES,null
+survey_workflow_nodes,completed_at,timestamp with time zone,YES,null
+survey_workflow_nodes,completion_count,integer,YES,0
+survey_workflow_nodes,last_completed_at,timestamp with time zone,YES,null
+survey_workflow_nodes,can_re_edit,boolean,YES,true
+survey_workflow_nodes,created_at,timestamp with time zone,YES,now()
+users,id,uuid,NO,null
+users,instance_id,uuid,YES,null
+users,email,text,NO,null
+users,id,uuid,NO,null
+users,aud,character varying,YES,null
+users,name,text,YES,null
+users,role,character varying,YES,null
+users,role,text,YES,'user'::text
+users,avatar,text,YES,null
+users,email,character varying,YES,null
+users,encrypted_password,character varying,YES,null
+users,created_at,timestamp with time zone,YES,now()
+users,updated_at,timestamp with time zone,YES,now()
+users,email_confirmed_at,timestamp with time zone,YES,null
+users,company_id,uuid,YES,null
+users,invited_at,timestamp with time zone,YES,null
+users,confirmation_token,character varying,YES,null
+users,confirmation_sent_at,timestamp with time zone,YES,null
+users,recovery_token,character varying,YES,null
+users,recovery_sent_at,timestamp with time zone,YES,null
+users,email_change_token_new,character varying,YES,null
+users,email_change,character varying,YES,null
+users,email_change_sent_at,timestamp with time zone,YES,null
+users,last_sign_in_at,timestamp with time zone,YES,null
+users,raw_app_meta_data,jsonb,YES,null
+users,raw_user_meta_data,jsonb,YES,null
+users,is_super_admin,boolean,YES,null
+users,created_at,timestamp with time zone,YES,null
+users,updated_at,timestamp with time zone,YES,null
+users,phone,text,YES,NULL::character varying
+users,phone_confirmed_at,timestamp with time zone,YES,null
+users,phone_change,text,YES,''::character varying
+users,phone_change_token,character varying,YES,''::character varying
+users,phone_change_sent_at,timestamp with time zone,YES,null
+users,confirmed_at,timestamp with time zone,YES,null
+users,email_change_token_current,character varying,YES,''::character varying
+users,email_change_confirm_status,smallint,YES,0
+users,banned_until,timestamp with time zone,YES,null
+users,reauthentication_token,character varying,YES,''::character varying
+users,reauthentication_sent_at,timestamp with time zone,YES,null
+users,is_sso_user,boolean,NO,false
+users,deleted_at,timestamp with time zone,YES,null
+users,is_anonymous,boolean,NO,false

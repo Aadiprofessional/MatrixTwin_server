@@ -606,12 +606,55 @@ router.post('/:id/members', auth, async (req, res) => {
         // If we try to filter by company_members and RLS prevents seeing them, we block valid operations.
         // So we skip the explicit pre-check and handle the insert error.
 
-        // 4. Force Insert (Skip all existence checks to debug)
-        // We are trusting the client payload completely now.
-        console.log(`[POST /members] Attempting to insert ${userIds.length} users into project ${projectId}`);
-        console.log(`[POST /members] User IDs:`, userIds);
+        // 4. Resolve User IDs (Smart Check)
+        // The frontend might be sending `company_members.id` instead of `users.id`.
+        // We need to resolve all incoming IDs to actual `users.id`.
+        
+        let finalUserIds = [];
+        const invalidIds = [];
 
-        const inserts = userIds.map(uid => ({
+        // Step A: Check if IDs exist directly in `users` table
+        const { data: directUsers, error: userError } = await supabase
+            .from('users')
+            .select('id')
+            .in('id', userIds);
+
+        if (userError) console.error('Error checking users:', userError);
+
+        const foundUserIds = directUsers ? directUsers.map(u => u.id) : [];
+        finalUserIds = [...foundUserIds];
+
+        // Step B: Identify IDs that were NOT found in `users` table
+        const remainingIds = userIds.filter(id => !foundUserIds.includes(id));
+
+        if (remainingIds.length > 0) {
+            console.log(`[POST /members] ${remainingIds.length} IDs not found in 'users', checking 'company_members'...`);
+            
+            // Step C: Check if these remaining IDs are actually `company_members.id`
+            const { data: memberRecords, error: memberError } = await supabase
+                .from('company_members')
+                .select('id, user_id')
+                .in('id', remainingIds);
+
+            if (memberError) console.error('Error checking company_members:', memberError);
+
+            if (memberRecords && memberRecords.length > 0) {
+                const resolvedUserIds = memberRecords.map(m => m.user_id);
+                console.log(`[POST /members] Resolved ${resolvedUserIds.length} IDs from 'company_members' table.`);
+                finalUserIds = [...finalUserIds, ...resolvedUserIds];
+            }
+        }
+
+        // Remove duplicates just in case
+        finalUserIds = [...new Set(finalUserIds)];
+
+        if (finalUserIds.length === 0) {
+             return res.status(400).json({ message: 'No valid user IDs found. Please provide valid User IDs or Company Member IDs.' });
+        }
+
+        console.log(`[POST /members] Final list of User IDs to insert:`, finalUserIds);
+
+        const inserts = finalUserIds.map(uid => ({
             project_id: projectId,
             user_id: uid,
             role: 'member'

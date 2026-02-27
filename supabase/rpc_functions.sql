@@ -46,6 +46,31 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.get_user_permissions(user_role TEXT)
+RETURNS TABLE (
+    permission_name TEXT,
+    permission_level INTEGER,
+    category TEXT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        p.name as permission_name,
+        rp.permission_level,
+        p.category
+    FROM 
+        roles r
+    JOIN 
+        role_permissions rp ON r.id = rp.role_id
+    JOIN 
+        permissions p ON rp.permission_id = p.id
+    WHERE 
+        r.name = user_role;
+END;
+$$;
+
 -- Function to remove a member from a company
 CREATE OR REPLACE FUNCTION public.remove_company_member_rpc(
     p_user_id UUID,

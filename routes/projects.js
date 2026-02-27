@@ -27,6 +27,49 @@ const upload = multer({
 // Owner: List all projects
 // Admin: List all projects for the company
 // Member: List only assigned projects
+
+// NEW ENDPOINT: Assigned projects (Must be defined BEFORE /:id to avoid collision)
+router.get('/assigned', auth, async (req, res) => {
+    try {
+        const supabase = req.supabase;
+        const userId = req.user.id; // From Auth Token
+        const creatorUid = req.query.creator_uid; // Optional, from query params
+
+        console.log(`[GET /assigned] Fetching assigned projects for user: ${userId}`);
+        
+        // If creator_uid is provided and different from auth user, check permissions
+        // But typically this endpoint is for "My Assigned Projects"
+        
+        // 1. Fetch Project Memberships
+        const { data: memberships, error: memberError } = await supabase
+            .from('project_members')
+            .select('project_id, role')
+            .eq('user_id', userId);
+
+        if (memberError) throw memberError;
+
+        const projectIds = memberships.map(m => m.project_id);
+
+        if (projectIds.length === 0) {
+            return res.json([]);
+        }
+
+        // 2. Fetch Project Details
+        const { data: projects, error: projectsError } = await supabase
+            .from('projects')
+            .select('*')
+            .in('id', projectIds)
+            .order('created_at', { ascending: false });
+
+        if (projectsError) throw projectsError;
+
+        res.json(projects);
+    } catch (err) {
+        console.error('Error fetching assigned projects:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 router.get('/list', auth, async (req, res) => {
     try {
         const supabase = req.supabase;

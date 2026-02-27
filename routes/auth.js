@@ -523,7 +523,7 @@ router.get('/users/:uid', async (req, res) => {
     // Now get project assignments for these users
     const userIds = users.map(user => user.id);
     const { data: assignments, error: assignmentError } = await req.supabase
-      .from('project_assignments')
+      .from('project_members')
       .select(`
         user_id,
         project_id,

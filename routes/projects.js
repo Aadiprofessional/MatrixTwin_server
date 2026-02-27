@@ -607,7 +607,25 @@ router.post('/:id/members', auth, async (req, res) => {
         // So we skip the explicit pre-check and handle the insert error.
 
         // Prepare inserts for ALL provided users
-        const inserts = userIds.map(uid => ({
+        // UPDATE: Check if users exist in the system to avoid FK errors crashing the request
+        const { data: existingUsers, error: userLookupError } = await supabase
+            .from('users')
+            .select('id')
+            .in('id', userIds);
+
+        if (userLookupError) {
+             console.error('Error checking users existence:', userLookupError);
+             // Proceed with caution
+        }
+
+        const existingUserIds = existingUsers ? existingUsers.map(u => u.id) : [];
+        const validUserIds = userIds.filter(uid => existingUserIds.includes(uid));
+
+        if (validUserIds.length === 0) {
+             return res.status(400).json({ message: 'None of the provided users exist in the system.' });
+        }
+
+        const inserts = validUserIds.map(uid => ({
             project_id: projectId,
             user_id: uid,
             role: 'member'

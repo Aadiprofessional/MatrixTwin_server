@@ -723,19 +723,41 @@ router.get('/:id/members', auth, async (req, res) => {
         }
 
         // 3. Fetch Members
-        const { data, error } = await supabase
+        // Fix: Use simple join syntax or separate queries if foreign key detection fails
+        const { data: members, error } = await supabase
             .from('project_members')
             .select(`
                 user_id,
                 role,
-                joined_at,
-                user:user_id (id, name, email, avatar, role)
+                joined_at
             `)
             .eq('project_id', projectId);
 
-        if (error) throw error;
+        if (error) {
+            console.error('Error fetching project members basic info:', error);
+            throw error;
+        }
 
-        res.json(data);
+        // Manually fetch user details to avoid PGRST200 error
+        if (members && members.length > 0) {
+            const userIds = members.map(m => m.user_id);
+            const { data: users, error: usersError } = await supabase
+                .from('users')
+                .select('id, name, email, avatar, role')
+                .in('id', userIds);
+            
+            if (!usersError && users) {
+                // Merge user data into members
+                const userMap = {};
+                users.forEach(u => userMap[u.id] = u);
+                
+                members.forEach(m => {
+                    m.user = userMap[m.user_id] || null;
+                });
+            }
+        }
+        
+        res.json(members);
     } catch (err) {
         console.error('Error fetching project members:', err);
         res.status(500).json({ message: 'Server error' });

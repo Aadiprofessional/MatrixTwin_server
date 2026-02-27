@@ -606,26 +606,12 @@ router.post('/:id/members', auth, async (req, res) => {
         // If we try to filter by company_members and RLS prevents seeing them, we block valid operations.
         // So we skip the explicit pre-check and handle the insert error.
 
-        // Prepare inserts for ALL provided users
-        // UPDATE: Check if users exist in the system to avoid FK errors crashing the request
-        const { data: existingUsers, error: userLookupError } = await supabase
-            .from('users')
-            .select('id')
-            .in('id', userIds);
+        // 4. Force Insert (Skip all existence checks to debug)
+        // We are trusting the client payload completely now.
+        console.log(`[POST /members] Attempting to insert ${userIds.length} users into project ${projectId}`);
+        console.log(`[POST /members] User IDs:`, userIds);
 
-        if (userLookupError) {
-             console.error('Error checking users existence:', userLookupError);
-             // Proceed with caution
-        }
-
-        const existingUserIds = existingUsers ? existingUsers.map(u => u.id) : [];
-        const validUserIds = userIds.filter(uid => existingUserIds.includes(uid));
-
-        if (validUserIds.length === 0) {
-             return res.status(400).json({ message: 'None of the provided users exist in the system.' });
-        }
-
-        const inserts = validUserIds.map(uid => ({
+        const inserts = userIds.map(uid => ({
             project_id: projectId,
             user_id: uid,
             role: 'member'
@@ -640,15 +626,17 @@ router.post('/:id/members', auth, async (req, res) => {
              console.error('Error adding project members:', error);
              // Handle specific FK error (Postgres code 23503)
              if (error.code === '23503') {
-                 return res.status(400).json({ message: 'One or more users do not exist in the system.' });
+                 // Even with force insert, if the DB says no, it's a hard no.
+                 return res.status(400).json({ message: 'Database rejected: One or more users do not exist.' });
              }
-             // Handle RLS policy violation or other errors
+             // Handle RLS policy violation
              if (error.code === '42501') {
-                 return res.status(403).json({ message: 'Permission denied to add members.' });
+                 return res.status(403).json({ message: 'Permission denied to add members (RLS).' });
              }
              throw error;
         }
 
+        console.log(`[POST /members] Successfully added members:`, data);
         res.json(data);
     } catch (err) {
         console.error('Error adding project members:', err);

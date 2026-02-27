@@ -837,9 +837,144 @@ router.delete('/:id/members/:memberId', auth, async (req, res) => {
 
         if (error) throw error;
 
-        res.json({ message: 'Member removed' });
+        res.json(data);
     } catch (err) {
         console.error('Error removing project member:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get assignable members for a project
+// Returns list of all company members categorized by assignment status
+router.get('/:id/assignable-members', auth, async (req, res) => {
+    try {
+        const supabase = req.supabase;
+        const userId = req.user.id;
+        const projectId = req.params.id;
+
+        // 1. Get Project to find Company ID
+        const { data: project, error: projectError } = await supabase
+            .from('projects')
+            .select('company_id, name')
+            .eq('id', projectId)
+            .single();
+
+        if (projectError || !project) {
+            return res.status(404).json({ message: 'Project not found' });
+        }
+
+        const companyId = project.company_id;
+
+        // 2. Verify Requestor Permission (Must be Admin/Owner or Project Member?)
+        // Usually only Admins/Owners assign members.
+        // Let's check if user is in the company at least.
+        const { data: requestorMember, error: requestorError } = await supabase
+            .from('company_members')
+            .select('role')
+            .eq('company_id', companyId)
+            .eq('user_id', userId)
+            .single();
+
+        if (requestorError || !requestorMember) {
+             // Maybe they are owner?
+             const { data: ownerCheck } = await supabase
+                 .from('users')
+                 .select('role')
+                 .eq('id', userId)
+                 .single();
+             
+             if (ownerCheck?.role !== 'owner') {
+                 return res.status(403).json({ message: 'Access denied. You are not a member of this company.' });
+             }
+        }
+
+        // 3. Fetch ALL Company Members
+        const { data: companyMembers, error: membersError } = await supabase
+            .from('company_members')
+            .select('user_id, role, joined_at')
+            .eq('company_id', companyId);
+
+        if (membersError) throw membersError;
+
+        const memberUserIds = companyMembers.map(m => m.user_id);
+
+        // 4. Fetch User Details for these members
+        const { data: users, error: usersError } = await supabase
+            .from('users')
+            .select('id, name, email, avatar, role')
+            .in('id', memberUserIds);
+
+        if (usersError) throw usersError;
+
+        // 5. Fetch ALL Project Memberships for these users in this company's projects
+        // We need to know which projects they are in.
+        // First get all projects of the company to filter properly
+        const { data: companyProjects } = await supabase
+            .from('projects')
+            .select('id, name')
+            .eq('company_id', companyId);
+        
+        const companyProjectIds = companyProjects.map(p => p.id);
+
+        const { data: projectMemberships, error: projMemError } = await supabase
+            .from('project_members')
+            .select('project_id, user_id')
+            .in('project_id', companyProjectIds)
+            .in('user_id', memberUserIds);
+
+        if (projMemError) throw projMemError;
+
+        // 6. Construct Response
+        const projectMap = {};
+        companyProjects.forEach(p => projectMap[p.id] = p.name);
+
+        const result = users.map(user => {
+            const memberInfo = companyMembers.find(m => m.user_id === user.id);
+            
+            // Find all projects this user is assigned to
+            const userProjectIds = projectMemberships
+                .filter(pm => pm.user_id === user.id)
+                .map(pm => pm.project_id);
+
+            const assignedToCurrent = userProjectIds.includes(projectId);
+            
+            const otherProjects = userProjectIds
+                .filter(pid => pid !== projectId)
+                .map(pid => ({
+                    id: pid,
+                    name: projectMap[pid] || 'Unknown Project'
+                }));
+
+            // Determine Status Category
+            let status = 'available';
+            if (assignedToCurrent) {
+                status = 'assigned_current';
+            } else if (otherProjects.length > 0) {
+                status = 'assigned_other';
+            }
+
+            return {
+                user: {
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    avatar: user.avatar,
+                    role: memberInfo ? memberInfo.role : user.role // Use company role if available
+                },
+                status: status,
+                assigned_to_current: assignedToCurrent,
+                other_assignments: otherProjects
+            };
+        });
+
+        res.json({
+            project_id: projectId,
+            project_name: project.name,
+            members: result
+        });
+
+    } catch (err) {
+        console.error('Error fetching assignable members:', err);
         res.status(500).json({ message: 'Server error' });
     }
 });

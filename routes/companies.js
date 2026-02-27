@@ -16,19 +16,36 @@ router.post(
   '/join',
   [
     auth,
-    body('company_id').notEmpty().withMessage('Company ID is required')
+    // Remove strict validation for company_id since we can now accept code
+    // We will validate manually inside the handler
   ],
   async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
     try {
-      const { company_id } = req.body;
+      let { company_id, code } = req.body;
       const { supabase, user } = req;
 
-      // 1. Check if user role is 'user'
+      // 1. Resolve Company ID from Code if necessary
+      if (code || (company_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(company_id))) {
+        // If code is provided OR company_id is provided but not a UUID (treated as code)
+        const lookupCode = code || company_id;
+        
+        const { data: company, error: companyError } = await supabase
+          .from('companies')
+          .select('id')
+          .eq('code', lookupCode)
+          .single();
+
+        if (companyError || !company) {
+          return res.status(404).json({ message: 'Company not found with the provided code.' });
+        }
+        company_id = company.id;
+      }
+
+      if (!company_id) {
+         return res.status(400).json({ message: 'Company Code or ID is required' });
+      }
+
+      // 2. Check if user role is 'user'
     if (user.role !== 'user') {
       return res.status(403).json({ message: 'Only users can join companies' });
     }

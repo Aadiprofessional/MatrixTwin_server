@@ -601,33 +601,13 @@ router.post('/:id/members', auth, async (req, res) => {
             return res.status(404).json({ message: 'Project not found' });
         }
 
-        // 4. Verify Users Exist (and optionally if they belong to company)
-        // Since project_members has a FK to users, the DB will reject if user doesn't exist.
-        // However, we should probably check if these users are in the company_members list first?
-        // Or just let the DB handle the FK constraint.
-        // The error `23503` indicates the user doesn't exist in `users` table.
+        // 4. Verify Users Exist (Optional - RLS might block this check)
+        // We will rely on the database foreign key constraint to catch non-existent users.
+        // If we try to filter by company_members and RLS prevents seeing them, we block valid operations.
+        // So we skip the explicit pre-check and handle the insert error.
 
-        // Let's filter out invalid users or just try to insert and catch.
-        // Better: Check if users are members of the company first.
-        const { data: validMembers, error: validMembersError } = await supabase
-            .from('company_members')
-            .select('user_id')
-            .eq('company_id', membership.company_id)
-            .in('user_id', userIds);
-
-        if (validMembersError) {
-             console.error('Error validating company members:', validMembersError);
-             // Proceed with caution or throw?
-        }
-
-        const validUserIds = validMembers ? validMembers.map(m => m.user_id) : [];
-        
-        if (validUserIds.length === 0) {
-            return res.status(400).json({ message: 'None of the provided users are members of your company.' });
-        }
-
-        // Prepare inserts for VALID users only
-        const inserts = validUserIds.map(uid => ({
+        // Prepare inserts for ALL provided users
+        const inserts = userIds.map(uid => ({
             project_id: projectId,
             user_id: uid,
             role: 'member'
@@ -639,9 +619,14 @@ router.post('/:id/members', auth, async (req, res) => {
             .select();
 
         if (error) {
-             // Handle specific FK error if it still slips through
+             console.error('Error adding project members:', error);
+             // Handle specific FK error (Postgres code 23503)
              if (error.code === '23503') {
-                 return res.status(400).json({ message: 'One or more users do not exist.' });
+                 return res.status(400).json({ message: 'One or more users do not exist in the system.' });
+             }
+             // Handle RLS policy violation or other errors
+             if (error.code === '42501') {
+                 return res.status(403).json({ message: 'Permission denied to add members.' });
              }
              throw error;
         }

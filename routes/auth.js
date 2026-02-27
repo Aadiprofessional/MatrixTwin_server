@@ -493,7 +493,7 @@ router.get('/users/:uid', async (req, res) => {
     // First check the requesting user's role
     const { data: requestingUser, error: roleError } = await req.supabase
       .from('users')
-      .select('role')
+      .select('role, company_id')
       .eq('id', requestingUserId)
       .single();
 
@@ -508,10 +508,18 @@ router.get('/users/:uid', async (req, res) => {
 
     // Apply role-based filtering
     if (requestingUser.role === 'admin') {
-      // Admin can see all users
+      // Admin can see all users in their company
+      if (requestingUser.company_id) {
+          userQuery = userQuery.eq('company_id', requestingUser.company_id);
+      }
     } else if (['projectManager', 'contractor'].includes(requestingUser.role)) {
-      // Project managers and contractors can only see workers
+      // Project managers and contractors can only see workers in their company
       userQuery = userQuery.eq('role', 'worker');
+      if (requestingUser.company_id) {
+          userQuery = userQuery.eq('company_id', requestingUser.company_id);
+      }
+    } else if (requestingUser.role === 'owner') {
+        // Owner (Super Admin) can see all users - No filter
     } else {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }

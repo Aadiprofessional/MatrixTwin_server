@@ -21,33 +21,16 @@ router.get('/search', async (req, res) => {
             return res.status(400).json({ error: 'Search query is required' });
         }
 
-        // Fetch user role if userId is provided
-        let userRole = 'user';
-        if (userId) {
-            // Check company_members first, then users table
-            const { data: member } = await req.supabase
-                .from('company_members')
-                .select('role')
-                .eq('user_id', userId)
-                .maybeSingle();
-            
-            if (member) {
-                userRole = member.role;
-            } else {
-                const { data: user } = await req.supabase
-                    .from('users')
-                    .select('role')
-                    .eq('id', userId)
-                    .maybeSingle();
-                if (user) userRole = user.role;
-            }
-        }
-
-        const isAdmin = ['admin', 'owner', 'project_manager'].includes(userRole);
-
+        // Removed manual role check and created_by filter to rely on RLS (Row Level Security)
+        // This ensures users see forms they created AND forms assigned to them, 
+        // while Admins see everything (assuming RLS policies are set correctly).
+        
         const config = getFormConfig();
         let results = [];
         const formTypesToSearch = formType ? [formType] : Object.keys(config);
+        
+        // Helper to check for UUID
+        const isUUID = (str) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
         for (const type of formTypesToSearch) {
             if (!config[type]) continue;
@@ -62,17 +45,19 @@ router.get('/search', async (req, res) => {
                 queryBuilder = queryBuilder.eq('project_id', projectId);
             }
             
-            if (userId && !isAdmin) {
-                // If not admin, restrict to forms created by user
-                queryBuilder = queryBuilder.eq('created_by', userId);
-            }
-            // If admin, do not apply created_by filter (can see all)
+            // Note: We are relying on RLS to filter visible forms (created by user OR assigned to user).
+            // Explicit filtering by 'created_by' would hide assigned forms.
 
             if (type === 'forms') {
-                // For custom forms, search in template_name or project_name
-                queryBuilder = queryBuilder.or(`id.ilike.%${query}%,template_name.ilike.%${query}%,project_name.ilike.%${query}%`);
+                // For custom forms (UUID id), search in template_name or project_name
+                // Only search ID if query is a valid UUID to avoid "operator does not exist: uuid ~~* unknown"
+                if (isUUID(query)) {
+                     queryBuilder = queryBuilder.or(`id.eq.${query},template_name.ilike.%${query}%,project_name.ilike.%${query}%`);
+                } else {
+                     queryBuilder = queryBuilder.or(`template_name.ilike.%${query}%,project_name.ilike.%${query}%`);
+                }
             } else {
-                // For other forms, search in id or project
+                // For other forms (Text ID), search in id or project
                 queryBuilder = queryBuilder.or(`id.ilike.%${query}%,project.ilike.%${query}%`);
             }
 
@@ -105,29 +90,9 @@ router.get('/dashboard', async (req, res) => {
     try {
         const { projectId, userId } = req.query;
         
-        // Fetch user role if userId is provided
-        let userRole = 'user';
-        if (userId) {
-            // Check company_members first, then users table
-            const { data: member } = await req.supabase
-                .from('company_members')
-                .select('role')
-                .eq('user_id', userId)
-                .maybeSingle();
-            
-            if (member) {
-                userRole = member.role;
-            } else {
-                const { data: user } = await req.supabase
-                    .from('users')
-                    .select('role')
-                    .eq('id', userId)
-                    .maybeSingle();
-                if (user) userRole = user.role;
-            }
-        }
-
-        const isAdmin = ['admin', 'owner', 'project_manager'].includes(userRole);
+        // Removed manual role check and created_by filter.
+        // We rely on RLS to return only forms visible to the user (Created + Assigned).
+        // This fixes the issue where non-admins saw 0 forms because we were filtering out assigned ones.
 
         const config = getFormConfig();
         const dashboardStats = {
@@ -139,9 +104,6 @@ router.get('/dashboard', async (req, res) => {
 
         const promises = Object.keys(config).map(async (type) => {
             const tableName = config[type].table;
-            
-            // Get counts for this form type
-            // We'll get total, pending, and completed
             
             let totalQuery = req.supabase
                 .from(tableName)
@@ -163,13 +125,7 @@ router.get('/dashboard', async (req, res) => {
                 completedQuery = completedQuery.eq('project_id', projectId);
             }
 
-            if (userId && !isAdmin) {
-                // If not admin, restrict to forms created by user
-                totalQuery = totalQuery.eq('created_by', userId);
-                pendingQuery = pendingQuery.eq('created_by', userId);
-                completedQuery = completedQuery.eq('created_by', userId);
-            }
-            // If admin, do not apply created_by filter (can see all)
+            // Note: RLS handles user visibility (created_by vs assigned)
 
             const { count: total, error: totalError } = await totalQuery;
             const { count: pending, error: pendingError } = await pendingQuery;

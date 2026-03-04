@@ -15,7 +15,7 @@ const getFormConfig = () => ({
 // 1. Search API
 router.get('/search', async (req, res) => {
     try {
-        const { query, formType, projectId } = req.query; // query can be id or project name/id
+        const { query, formType, projectId, userId } = req.query; // query can be id or project name/id
         
         if (!query) {
             return res.status(400).json({ error: 'Search query is required' });
@@ -41,6 +41,23 @@ router.get('/search', async (req, res) => {
 
             if (projectId) {
                 queryBuilder = queryBuilder.eq('project_id', projectId);
+            }
+            
+            if (userId) {
+                // If userId is provided, we might want to show forms created by them OR assigned to them.
+                // However, without a join on assignment tables, checking 'created_by' is the most direct way.
+                // Most form tables have 'created_by'.
+                // If we need to check assignments, it would require a more complex query or multiple queries.
+                // Given the request "fetch accoridng to that" (uid), usually means created_by for simple lists, 
+                // but for "pending" usually implies "assigned to".
+                // Let's stick to created_by for search unless specified otherwise, or simple filtering.
+                // Wait, "assing to them or not" implies assignments.
+                // But assignments are in separate tables (e.g. diary_assignments).
+                // Doing a cross-table search for all types is complex in one go.
+                // For now, let's filter by created_by as a baseline, 
+                // OR we can try to filter by executor_id in workflow nodes if we had that joined.
+                // Simplest interpretation: Forms they created.
+                queryBuilder = queryBuilder.eq('created_by', userId);
             }
 
             if (type === 'forms') {
@@ -81,7 +98,7 @@ router.get('/search', async (req, res) => {
 // 2. Dashboard API - Aggregate stats
 router.get('/dashboard', async (req, res) => {
     try {
-        const { projectId } = req.query;
+        const { projectId, userId } = req.query;
         const config = getFormConfig();
         const dashboardStats = {
             total_forms: 0,
@@ -119,6 +136,13 @@ router.get('/dashboard', async (req, res) => {
                 completedQuery = completedQuery.eq('project_id', projectId);
             }
 
+            if (userId) {
+                // Filter by creator as a baseline for dashboard stats
+                totalQuery = totalQuery.eq('created_by', userId);
+                pendingQuery = pendingQuery.eq('created_by', userId);
+                completedQuery = completedQuery.eq('created_by', userId);
+            }
+
             const { count: total, error: totalError } = await totalQuery;
             const { count: pending, error: pendingError } = await pendingQuery;
             const { count: completed, error: completedError } = await completedQuery;
@@ -154,30 +178,75 @@ router.get('/dashboard', async (req, res) => {
 // 3. Pending Forms API - Just counts for sidebar
 router.get('/pending-counts', async (req, res) => {
     try {
-        const { projectId } = req.query;
+        const { projectId, userId } = req.query;
         const config = getFormConfig();
         const pendingCounts = {};
+
+        if (!userId) {
+            // Fallback to original logic if no userId (counts all pending forms in system/project)
+            // Or maybe return 0? The request specifically asked for "uid dependent as it is assing to them".
+            // Let's assume userId is required for accurate "my pending" counts.
+            // But if missing, we can return 0 or error. Let's return 0 to be safe.
+            return res.json({});
+        }
 
         const promises = Object.keys(config).map(async (type) => {
             const tableName = config[type].table;
             
+            // Construct workflow table name: e.g. diary_workflow_nodes
+            const workflowTableName = `${type}_workflow_nodes`;
+            
+            let wfTable = workflowTableName;
+            let foreignKey = `${type}_id`;
+            if (type === 'forms') {
+                wfTable = 'form_workflow_nodes';
+                foreignKey = 'form_id';
+            }
+
+            // We need to count pending workflow nodes assigned to this user.
+            
             let query = req.supabase
-                .from(tableName)
-                .select('*', { count: 'exact', head: true })
-                .eq('status', 'pending');
+                .from(wfTable)
+                .select(foreignKey, { count: 'exact', head: true })
+                .eq('status', 'pending')
+                .eq('executor_id', userId);
 
             if (projectId) {
-                query = query.eq('project_id', projectId);
+                // Join with parent table to filter by project_id
+                // Syntax: select('foreign_key, parent_table!inner(project_id)')
+                // Note: The foreign key column in workflow table (e.g. diary_id) is used for join.
+                // Supabase join syntax: table!foreign_key(columns)
+                // But since we have implicit FK, table name works.
+                
+                // We need to select the column that links to parent, and filter parent's project_id
+                
+                // For custom forms: form_workflow_nodes -> form_id -> form_entries(id)
+                // For diary: diary_workflow_nodes -> diary_id -> diary_entries(id)
+                
+                // Correct syntax for count with join filter:
+                const { count, error } = await req.supabase
+                    .from(wfTable)
+                    .select(`${foreignKey}, ${config[type].table}!inner(project_id)`, { count: 'exact', head: true })
+                    .eq('status', 'pending')
+                    .eq('executor_id', userId)
+                    .eq(`${config[type].table}.project_id`, projectId);
+
+                 if (error) {
+                    // console.error(`Error fetching pending count for ${type} (with project):`, error);
+                    return { type, count: 0 };
+                }
+                return { type, count: count || 0 };
+
+            } else {
+                // Simple query on workflow table if no project filter
+                const { count, error } = await query;
+                
+                if (error) {
+                    // console.error(`Error fetching pending count for ${type}:`, error);
+                    return { type, count: 0 };
+                }
+                return { type, count: count || 0 };
             }
-
-            const { count, error } = await query;
-
-            if (error) {
-                console.error(`Error fetching pending count for ${type}:`, error);
-                return { type, count: 0 };
-            }
-
-            return { type, count: count || 0 };
         });
 
         const results = await Promise.all(promises);

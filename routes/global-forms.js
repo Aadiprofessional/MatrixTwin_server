@@ -21,6 +21,30 @@ router.get('/search', async (req, res) => {
             return res.status(400).json({ error: 'Search query is required' });
         }
 
+        // Fetch user role if userId is provided
+        let userRole = 'user';
+        if (userId) {
+            // Check company_members first, then users table
+            const { data: member } = await req.supabase
+                .from('company_members')
+                .select('role')
+                .eq('user_id', userId)
+                .maybeSingle();
+            
+            if (member) {
+                userRole = member.role;
+            } else {
+                const { data: user } = await req.supabase
+                    .from('users')
+                    .select('role')
+                    .eq('id', userId)
+                    .maybeSingle();
+                if (user) userRole = user.role;
+            }
+        }
+
+        const isAdmin = ['admin', 'owner', 'project_manager'].includes(userRole);
+
         const config = getFormConfig();
         let results = [];
         const formTypesToSearch = formType ? [formType] : Object.keys(config);
@@ -30,11 +54,6 @@ router.get('/search', async (req, res) => {
             
             const tableName = config[type].table;
             
-            // Build query to search by ID or Project (assuming project/project_id columns exist)
-            // Note: Some tables use 'project' (name) and 'project_id', others might vary.
-            // Based on schema, most have 'id', 'project', 'project_id'.
-            // Custom forms (form_entries) has 'template_name' instead of project sometimes, but schema says project_id/project_name exist.
-            
             let queryBuilder = req.supabase
                 .from(tableName)
                 .select('*');
@@ -43,22 +62,11 @@ router.get('/search', async (req, res) => {
                 queryBuilder = queryBuilder.eq('project_id', projectId);
             }
             
-            if (userId) {
-                // If userId is provided, we might want to show forms created by them OR assigned to them.
-                // However, without a join on assignment tables, checking 'created_by' is the most direct way.
-                // Most form tables have 'created_by'.
-                // If we need to check assignments, it would require a more complex query or multiple queries.
-                // Given the request "fetch accoridng to that" (uid), usually means created_by for simple lists, 
-                // but for "pending" usually implies "assigned to".
-                // Let's stick to created_by for search unless specified otherwise, or simple filtering.
-                // Wait, "assing to them or not" implies assignments.
-                // But assignments are in separate tables (e.g. diary_assignments).
-                // Doing a cross-table search for all types is complex in one go.
-                // For now, let's filter by created_by as a baseline, 
-                // OR we can try to filter by executor_id in workflow nodes if we had that joined.
-                // Simplest interpretation: Forms they created.
+            if (userId && !isAdmin) {
+                // If not admin, restrict to forms created by user
                 queryBuilder = queryBuilder.eq('created_by', userId);
             }
+            // If admin, do not apply created_by filter (can see all)
 
             if (type === 'forms') {
                 // For custom forms, search in template_name or project_name
@@ -67,9 +75,6 @@ router.get('/search', async (req, res) => {
                 // For other forms, search in id or project
                 queryBuilder = queryBuilder.or(`id.ilike.%${query}%,project.ilike.%${query}%`);
             }
-            
-            // Add status filter if provided (optional, not requested but good practice)
-            // if (req.query.status) queryBuilder = queryBuilder.eq('status', req.query.status);
 
             const { data, error } = await queryBuilder.limit(20);
 
@@ -99,6 +104,31 @@ router.get('/search', async (req, res) => {
 router.get('/dashboard', async (req, res) => {
     try {
         const { projectId, userId } = req.query;
+        
+        // Fetch user role if userId is provided
+        let userRole = 'user';
+        if (userId) {
+            // Check company_members first, then users table
+            const { data: member } = await req.supabase
+                .from('company_members')
+                .select('role')
+                .eq('user_id', userId)
+                .maybeSingle();
+            
+            if (member) {
+                userRole = member.role;
+            } else {
+                const { data: user } = await req.supabase
+                    .from('users')
+                    .select('role')
+                    .eq('id', userId)
+                    .maybeSingle();
+                if (user) userRole = user.role;
+            }
+        }
+
+        const isAdmin = ['admin', 'owner', 'project_manager'].includes(userRole);
+
         const config = getFormConfig();
         const dashboardStats = {
             total_forms: 0,
@@ -112,9 +142,6 @@ router.get('/dashboard', async (req, res) => {
             
             // Get counts for this form type
             // We'll get total, pending, and completed
-            // Using multiple queries or a single query with grouping might be heavy, 
-            // but for a dashboard, we want summary.
-            // Let's do simple counts.
             
             let totalQuery = req.supabase
                 .from(tableName)
@@ -136,12 +163,13 @@ router.get('/dashboard', async (req, res) => {
                 completedQuery = completedQuery.eq('project_id', projectId);
             }
 
-            if (userId) {
-                // Filter by creator as a baseline for dashboard stats
+            if (userId && !isAdmin) {
+                // If not admin, restrict to forms created by user
                 totalQuery = totalQuery.eq('created_by', userId);
                 pendingQuery = pendingQuery.eq('created_by', userId);
                 completedQuery = completedQuery.eq('created_by', userId);
             }
+            // If admin, do not apply created_by filter (can see all)
 
             const { count: total, error: totalError } = await totalQuery;
             const { count: pending, error: pendingError } = await pendingQuery;
@@ -183,12 +211,32 @@ router.get('/pending-counts', async (req, res) => {
         const pendingCounts = {};
 
         if (!userId) {
-            // Fallback to original logic if no userId (counts all pending forms in system/project)
-            // Or maybe return 0? The request specifically asked for "uid dependent as it is assing to them".
-            // Let's assume userId is required for accurate "my pending" counts.
-            // But if missing, we can return 0 or error. Let's return 0 to be safe.
             return res.json({});
         }
+
+        // Fetch user role if userId is provided
+        let userRole = 'user';
+        if (userId) {
+            // Check company_members first, then users table
+            const { data: member } = await req.supabase
+                .from('company_members')
+                .select('role')
+                .eq('user_id', userId)
+                .maybeSingle();
+            
+            if (member) {
+                userRole = member.role;
+            } else {
+                const { data: user } = await req.supabase
+                    .from('users')
+                    .select('role')
+                    .eq('id', userId)
+                    .maybeSingle();
+                if (user) userRole = user.role;
+            }
+        }
+
+        const isAdmin = ['admin', 'owner', 'project_manager'].includes(userRole);
 
         const promises = Object.keys(config).map(async (type) => {
             const tableName = config[type].table;
@@ -208,28 +256,29 @@ router.get('/pending-counts', async (req, res) => {
             let query = req.supabase
                 .from(wfTable)
                 .select(foreignKey, { count: 'exact', head: true })
-                .eq('status', 'pending')
-                .eq('executor_id', userId);
+                .eq('status', 'pending');
+            
+            if (!isAdmin) {
+                // If not admin, restrict to tasks assigned to this user
+                query = query.eq('executor_id', userId);
+            }
+            // If admin, show all pending tasks regardless of assignment
 
             if (projectId) {
                 // Join with parent table to filter by project_id
-                // Syntax: select('foreign_key, parent_table!inner(project_id)')
-                // Note: The foreign key column in workflow table (e.g. diary_id) is used for join.
-                // Supabase join syntax: table!foreign_key(columns)
-                // But since we have implicit FK, table name works.
-                
-                // We need to select the column that links to parent, and filter parent's project_id
-                
-                // For custom forms: form_workflow_nodes -> form_id -> form_entries(id)
-                // For diary: diary_workflow_nodes -> diary_id -> diary_entries(id)
                 
                 // Correct syntax for count with join filter:
-                const { count, error } = await req.supabase
+                let joinQuery = req.supabase
                     .from(wfTable)
                     .select(`${foreignKey}, ${config[type].table}!inner(project_id)`, { count: 'exact', head: true })
                     .eq('status', 'pending')
-                    .eq('executor_id', userId)
                     .eq(`${config[type].table}.project_id`, projectId);
+                
+                if (!isAdmin) {
+                    joinQuery = joinQuery.eq('executor_id', userId);
+                }
+
+                const { count, error } = await joinQuery;
 
                  if (error) {
                     // console.error(`Error fetching pending count for ${type} (with project):`, error);

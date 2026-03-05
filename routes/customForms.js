@@ -217,7 +217,9 @@ router.post('/entries/create', auth, disableRLS, async (req, res) => {
     const { 
       templateId,
       formData,
-      projectId
+      projectId,
+      formId,
+      name
     } = req.body;
 
     console.log('=== FORM ENTRY CREATION START ===');
@@ -263,11 +265,15 @@ router.post('/entries/create', auth, disableRLS, async (req, res) => {
 
     // Create form entry
     const formEntry = {
+      ...(formId ? { id: formId } : {}), // Use formId if provided
       template_id: templateId,
       template_name: template.name,
       project_id: projectId,
-      project_name: formData.projectName || 'Unknown Project',
-      form_data: formData,
+      project_name: projectId || formData.projectId || formData.projectName || 'Unknown Project',
+      form_data: {
+        ...formData,
+        name: name || formData.name || formData.formNumber // Ensure name is saved
+      },
       created_by: req.user.id === 'dev-user-id' ? '5fcf581f-f854-459b-b521-aae507891337' : req.user.id,
       status: 'pending',
       current_node_index: 1,

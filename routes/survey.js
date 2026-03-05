@@ -50,7 +50,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       formData, 
       processNodes, 
       createdBy,
-      projectId
+      projectId,
+      formId,
+      name
     } = req.body;
 
     console.log('=== SURVEY CREATION START ===');
@@ -79,9 +81,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
 
     // Create survey entry
     const surveyEntry = {
-      id: `survey_${Date.now()}`,
+      id: formId || `survey_${Date.now()}`,
       date: formData.surveyDate || formData.inspectionDate || new Date().toISOString().split('T')[0],
-      project: formData.projectId || 'Unknown Project',
+      project: projectId || formData.projectId || 'Unknown Project',
       project_id: projectId,
       surveyor: formData.surveyor || formData.surveyedBy || user.name,
       contract_no: formData.contractNo || '',
@@ -100,7 +102,10 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       no_objection: formData.noObjection || false,
       deficiencies_noted: formData.deficienciesNoted || false,
       deficiencies: formData.deficiencies || [],
-      form_data: formData,
+      form_data: {
+        ...formData,
+        name: name || formData.name || formData.formNumber // Ensure name is saved
+      },
       created_by: createdBy,
       created_at: new Date().toISOString(),
       status: 'pending',

@@ -52,7 +52,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       formData, 
       processNodes, 
       createdBy,
-      projectId
+      projectId,
+      formId,
+      name
     } = req.body;
 
     console.log('=== SAFETY CREATION START ===');
@@ -81,9 +83,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
 
     // Create safety entry
     const safetyEntry = {
-      id: `safety_${Date.now()}`,
+      id: formId || `safety_${Date.now()}`,
       date: formData.inspectionDate || new Date().toISOString().split('T')[0],
-      project: formData.projectId || 'Unknown Project',
+      project: projectId || formData.projectId || 'Unknown Project',
       project_id: projectId,
       inspector: user.name,
       inspection_type: formData.inspectionType || 'General Safety Inspection',
@@ -92,7 +94,10 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       incidents_reported: formData.nonComplianceDetails || '',
       corrective_actions: formData.recommendedActions || '',
       notes: formData.immediateActions || '',
-      form_data: formData,
+      form_data: {
+        ...formData,
+        name: name || formData.name || formData.formNumber // Ensure name is saved
+      },
       created_by: createdBy,
       created_at: new Date().toISOString(),
       status: 'pending',

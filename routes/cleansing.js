@@ -52,7 +52,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       formData, 
       processNodes, 
       createdBy,
-      projectId
+      projectId,
+      formId,
+      name
     } = req.body;
 
     console.log('=== CLEANSING CREATION START ===');
@@ -81,9 +83,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
 
     // Create cleansing entry
     const cleansingEntry = {
-      id: `cleansing_${Date.now()}`,
+      id: formId || `cleansing_${Date.now()}`,
       date: formData.inspectionDate || new Date().toISOString().split('T')[0],
-      project: formData.projectId || 'Unknown Project',
+      project: projectId || formData.projectId || 'Unknown Project',
       project_id: projectId,
       inspector: user.name,
       area: formData.areaInspected || '',
@@ -92,7 +94,10 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       areas_cleaned: formData.areasRequiringCleaning || '',
       waste_removed: formData.wasteRemovalRequired || '',
       notes: formData.additionalNotes || '',
-      form_data: formData,
+      form_data: {
+        ...formData,
+        name: name || formData.name || formData.formNumber // Ensure name is saved
+      },
       created_by: createdBy,
       created_at: new Date().toISOString(),
       status: 'pending',

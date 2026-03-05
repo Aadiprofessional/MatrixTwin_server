@@ -85,7 +85,7 @@ router.post('/create', auth, disableRLS, async (req, res) => {
     const labourEntry = {
       id: formId || `labour_${Date.now()}`,
       date: formData.returnDate || new Date().toISOString().split('T')[0],
-      project: formData.projectId || 'Unknown Project',
+      project: projectId || formData.projectId || 'Unknown Project',
       project_id: projectId,
       submitter: user.name,
       labour_type: formData.laborCategory || 'General Labour',

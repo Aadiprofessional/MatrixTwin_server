@@ -52,7 +52,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       formData, 
       processNodes, 
       createdBy,
-      projectId
+      projectId,
+      formId,
+      name
     } = req.body;
 
     console.log('=== INSPECTION CREATION START ===');
@@ -81,9 +83,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
 
     // Create inspection entry
     const inspectionEntry = {
-      id: `inspection_${Date.now()}`,
+      id: formId || `inspection_${Date.now()}`,
       date: formData.inspectionDate || new Date().toISOString().split('T')[0],
-      project: formData.projectId || 'Unknown Project',
+      project: projectId || formData.projectId || 'Unknown Project',
       project_id: projectId,
       inspector: formData.inspectedBy || user.name,
       contract_no: formData.contractNo || '',
@@ -103,7 +105,10 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       no_objection: formData.noObjection || false,
       deficiencies_noted: formData.deficienciesNoted || false,
       deficiencies: formData.deficiencies || [],
-      form_data: formData,
+      form_data: {
+        ...formData,
+        name: name || formData.name || formData.formNumber // Ensure name is saved
+      },
       created_by: createdBy,
       created_at: new Date().toISOString(),
       status: 'pending',

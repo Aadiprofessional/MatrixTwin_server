@@ -52,7 +52,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       formData, 
       processNodes, 
       createdBy,
-      projectId
+      projectId,
+      formId,
+      name
     } = req.body;
 
     console.log('=== LABOUR CREATION START ===');
@@ -81,7 +83,7 @@ router.post('/create', auth, disableRLS, async (req, res) => {
 
     // Create labour entry
     const labourEntry = {
-      id: `labour_${Date.now()}`,
+      id: formId || `labour_${Date.now()}`,
       date: formData.returnDate || new Date().toISOString().split('T')[0],
       project: formData.projectId || 'Unknown Project',
       project_id: projectId,
@@ -92,7 +94,10 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       hours_worked: parseFloat(formData.hoursWorked) || 0,
       work_description: formData.workArea || '',
       notes: formData.reportedDelays || '',
-      form_data: formData,
+      form_data: {
+        ...formData,
+        name: name || formData.name || formData.formNumber // Ensure name is saved
+      },
       created_by: createdBy,
       created_at: new Date().toISOString(),
       status: 'pending',

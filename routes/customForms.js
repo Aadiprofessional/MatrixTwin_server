@@ -535,6 +535,37 @@ router.get('/entries/details/:entryId', auth, disableRLS, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/custom-forms/entries/:entryId/history
+ * @desc    Get history of changes for a form entry
+ * @access  Private
+ */
+router.get('/entries/:entryId/history', auth, disableRLS, async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: history, error: historyError } = await supabase
+      .from('form_entry_history')
+      .select(`
+        *,
+        users:changed_by (name, email)
+      `)
+      .eq('form_entry_id', entryId)
+      .order('changed_at', { ascending: false });
+
+    if (historyError) throw historyError;
+
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching form history:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch form history',
+      details: error.message 
+    });
+  }
+});
+
+/**
  * @route   PUT /api/custom-forms/entries/:entryId/update
  * @desc    Update form entry and advance workflow
  * @access  Private
@@ -592,6 +623,24 @@ router.put('/entries/:entryId/update', auth, disableRLS, async (req, res) => {
 
     // Update form data if provided
     if (formData) {
+      // Create history entry
+      const historyEntry = {
+        form_entry_id: entryId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: formData,
+        change_reason: action || 'update'
+      };
+
+      const { error: historyError } = await supabase
+        .from('form_entry_history')
+        .insert([historyEntry]);
+
+      if (historyError) {
+        console.error('Failed to save form history:', historyError);
+        // Continue with update even if history fails, but log it
+      }
+
       const { error: updateError } = await supabase
         .from('form_entries')
         .update({

@@ -408,6 +408,37 @@ router.get('/:surveyId', auth, disableRLS, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/survey/:surveyId/history
+ * @desc    Get history of changes for a survey entry
+ * @access  Private
+ */
+router.get('/:surveyId/history', auth, disableRLS, async (req, res) => {
+  try {
+    const { surveyId } = req.params;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: history, error: historyError } = await supabase
+      .from('survey_entry_history')
+      .select(`
+        *,
+        users:changed_by (name, email)
+      `)
+      .eq('survey_id', surveyId)
+      .order('changed_at', { ascending: false });
+
+    if (historyError) throw historyError;
+
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching survey history:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch survey history',
+      details: error.message 
+    });
+  }
+});
+
+/**
  * @route   PUT /api/survey/:surveyId/update
  * @desc    Update survey entry and advance workflow
  * @access  Private
@@ -465,6 +496,24 @@ router.put('/:surveyId/update', auth, disableRLS, async (req, res) => {
 
     // Update form data if provided
     if (formData) {
+      // Create history entry
+      const historyEntry = {
+        survey_id: surveyId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: formData,
+        change_reason: action || 'update'
+      };
+
+      const { error: historyError } = await supabase
+        .from('survey_entry_history')
+        .insert([historyEntry]);
+
+      if (historyError) {
+        console.error('Failed to save survey history:', historyError);
+        // Continue with update even if history fails, but log it
+      }
+
       const { error: updateError } = await supabase
         .from('survey_entries')
         .update({

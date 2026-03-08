@@ -395,6 +395,37 @@ router.get('/:diaryId', auth, disableRLS, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/diary/:diaryId/history
+ * @desc    Get history of changes for a diary entry
+ * @access  Private
+ */
+router.get('/:diaryId/history', auth, disableRLS, async (req, res) => {
+  try {
+    const { diaryId } = req.params;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: history, error: historyError } = await supabase
+      .from('diary_entry_history')
+      .select(`
+        *,
+        users:changed_by (name, email)
+      `)
+      .eq('diary_id', diaryId)
+      .order('changed_at', { ascending: false });
+
+    if (historyError) throw historyError;
+
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching diary history:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch diary history',
+      details: error.message 
+    });
+  }
+});
+
+/**
  * @route   PUT /api/diary/:diaryId/update
  * @desc    Update diary entry and advance workflow
  * @access  Private
@@ -460,6 +491,24 @@ router.put('/:diaryId/update', auth, disableRLS, async (req, res) => {
 
     // Update form data if provided
     if (formData) {
+      // Create history entry
+      const historyEntry = {
+        diary_id: diaryId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: formData,
+        change_reason: action || 'update'
+      };
+
+      const { error: historyError } = await supabase
+        .from('diary_entry_history')
+        .insert([historyEntry]);
+
+      if (historyError) {
+        console.error('Failed to save diary history:', historyError);
+        // Continue with update even if history fails, but log it
+      }
+
       const { error: updateError } = await supabase
         .from('diary_entries')
         .update({

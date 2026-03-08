@@ -401,6 +401,37 @@ router.get('/:cleansingId', auth, disableRLS, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/cleansing/:cleansingId/history
+ * @desc    Get history of changes for a cleansing entry
+ * @access  Private
+ */
+router.get('/:cleansingId/history', auth, disableRLS, async (req, res) => {
+  try {
+    const { cleansingId } = req.params;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: history, error: historyError } = await supabase
+      .from('cleansing_entry_history')
+      .select(`
+        *,
+        users:changed_by (name, email)
+      `)
+      .eq('cleansing_id', cleansingId)
+      .order('changed_at', { ascending: false });
+
+    if (historyError) throw historyError;
+
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching cleansing history:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch cleansing history',
+      details: error.message 
+    });
+  }
+});
+
+/**
  * @route   PUT /api/cleansing/:cleansingId/update
  * @desc    Update cleansing entry and advance workflow
  * @access  Private
@@ -466,6 +497,24 @@ router.put('/:cleansingId/update', auth, disableRLS, async (req, res) => {
 
     // Update form data if provided
     if (formData) {
+      // Create history entry
+      const historyEntry = {
+        cleansing_id: cleansingId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: formData,
+        change_reason: action || 'update'
+      };
+
+      const { error: historyError } = await supabase
+        .from('cleansing_entry_history')
+        .insert([historyEntry]);
+
+      if (historyError) {
+        console.error('Failed to save cleansing history:', historyError);
+        // Continue with update even if history fails, but log it
+      }
+
       const { error: updateError } = await supabase
       .from('cleansing_entries')
         .update({

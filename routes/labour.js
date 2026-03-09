@@ -503,7 +503,8 @@ router.put('/:labourId/update', auth, disableRLS, async (req, res) => {
         changed_by: userId,
         changed_at: new Date().toISOString(),
         form_data: formData,
-        change_reason: action || 'update'
+        change_reason: action || 'update',
+        node_order: currentNode ? currentNode.node_order : null
       };
 
       const { error: historyError } = await supabase
@@ -659,6 +660,40 @@ router.put('/:labourId/update', auth, disableRLS, async (req, res) => {
         });
       }
 
+      // REVERT LOGIC: Restore form data from history for the target node
+      const { data: revertHistory } = await supabase
+        .from('labour_entry_history')
+        .select('form_data')
+        .eq('labour_id', labourId)
+        .eq('node_order', firstEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting labour ${labourId} to data from node ${firstEditableNode.node_order}`);
+        
+        await supabase
+          .from('labour_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', labourId);
+
+        // Record this revert in history
+        await supabase
+          .from('labour_entry_history')
+          .insert([{
+            labour_id: labourId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `revert_to_node_${firstEditableNode.node_order}`,
+            node_order: firstEditableNode.node_order
+          }]);
+      }
+
       // Send back to first editable node
       await supabase
         .from('labour_entries')
@@ -717,6 +752,40 @@ router.put('/:labourId/update', auth, disableRLS, async (req, res) => {
         .update({ status: 'pending' })
         .eq('labour_id', labourId)
         .eq('node_order', prevEditableNode.node_order);
+
+      // REVERT LOGIC: Restore form data from history for the target node (prevEditableNode)
+      const { data: revertHistory } = await supabase
+        .from('labour_entry_history')
+        .select('form_data')
+        .eq('labour_id', labourId)
+        .eq('node_order', prevEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting labour ${labourId} to data from node ${prevEditableNode.node_order}`);
+        
+        await supabase
+          .from('labour_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', labourId);
+
+        // Record this revert in history
+        await supabase
+          .from('labour_entry_history')
+          .insert([{
+            labour_id: labourId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `back_to_node_${prevEditableNode.node_order}`,
+            node_order: prevEditableNode.node_order
+          }]);
+      }
 
       await supabase
         .from('labour_entries')
@@ -1248,5 +1317,93 @@ MatrixTwin Notification System
     console.error('Error details:', JSON.stringify(error, null, 2));
   }
 }
+
+/**
+ * @route   POST /api/labour/:labourId/restore
+ * @desc    Restore labour entry from history
+ * @access  Private
+ */
+router.post('/:labourId/restore', auth, disableRLS, async (req, res) => {
+  try {
+    const { labourId } = req.params;
+    const { historyId } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    // Get history entry
+    const { data: historyEntry, error: historyError } = await supabase
+      .from('labour_entry_history')
+      .select('*')
+      .eq('id', historyId)
+      .eq('labour_id', labourId)
+      .single();
+
+    if (historyError || !historyEntry) {
+      return res.status(404).json({ error: 'History entry not found' });
+    }
+
+    // Get current labour entry
+    const { data: labour, error: labourError } = await supabase
+      .from('labour_entries')
+      .select('*')
+      .eq('id', labourId)
+      .single();
+
+    if (labourError || !labour) {
+      return res.status(404).json({ error: 'Labour entry not found' });
+    }
+
+    // Check permissions (same as update)
+    const canUpdate = req.user.role === 'admin' || 
+                      labour.created_by === userId;
+    
+    if (!canUpdate) {
+      return res.status(403).json({ error: 'No permission to restore this labour entry' });
+    }
+
+    // Update main entry with historical data
+    const { error: updateError } = await supabase
+      .from('labour_entries')
+      .update({
+        form_data: historyEntry.form_data,
+        updated_at: new Date().toISOString(),
+        // Restore flattened fields
+        labour_type: historyEntry.form_data.laborCategory || labour.labour_type,
+        trade_type: historyEntry.form_data.workPackage || labour.trade_type,
+        number_of_workers: parseInt(historyEntry.form_data.numberOfWorkers) || labour.number_of_workers,
+        hours_worked: parseFloat(historyEntry.form_data.hoursWorked) || labour.hours_worked,
+        work_description: historyEntry.form_data.workArea || labour.work_description,
+        notes: historyEntry.form_data.reportedDelays || labour.notes
+      })
+      .eq('id', labourId);
+
+    if (updateError) throw updateError;
+
+    // Record this restoration in history
+    await supabase
+      .from('labour_entry_history')
+      .insert([{
+        labour_id: labourId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: historyEntry.form_data,
+        change_reason: `restored_from_${historyId}`,
+        node_order: labour.current_node_index
+      }]);
+
+    res.json({
+      success: true,
+      message: 'Labour entry restored successfully',
+      data: historyEntry.form_data
+    });
+
+  } catch (error) {
+    console.error('Error restoring labour entry:', error);
+    res.status(500).json({ 
+      error: 'Failed to restore labour entry',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router; 

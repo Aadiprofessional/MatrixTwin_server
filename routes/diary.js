@@ -497,7 +497,8 @@ router.put('/:diaryId/update', auth, disableRLS, async (req, res) => {
         changed_by: userId,
         changed_at: new Date().toISOString(),
         form_data: formData,
-        change_reason: action || 'update'
+        change_reason: action || 'update',
+        node_order: currentNode ? currentNode.node_order : null
       };
 
       const { error: historyError } = await supabase
@@ -647,6 +648,44 @@ router.put('/:diaryId/update', auth, disableRLS, async (req, res) => {
         });
       }
 
+      // REVERT LOGIC: Restore form data from history for the target node
+      // We look for the latest history entry that was created when the form was at the target node (or before)
+      // Ideally, we find a history entry where node_order === firstEditableNode.node_order
+      const { data: revertHistory } = await supabase
+        .from('diary_entry_history')
+        .select('form_data')
+        .eq('diary_id', diaryId)
+        .eq('node_order', firstEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting diary ${diaryId} to data from node ${firstEditableNode.node_order}`);
+        
+        // Update main entry with historical data
+        await supabase
+          .from('diary_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            // Also update flattened fields if needed, simplified here
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', diaryId);
+
+        // Record this revert in history
+        await supabase
+          .from('diary_entry_history')
+          .insert([{
+            diary_id: diaryId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `revert_to_node_${firstEditableNode.node_order}`,
+            node_order: firstEditableNode.node_order
+          }]);
+      }
+
       // Send back to first editable node
       await supabase
         .from('diary_entries')
@@ -706,6 +745,41 @@ router.put('/:diaryId/update', auth, disableRLS, async (req, res) => {
         .eq('diary_id', diaryId)
         .eq('node_order', prevEditableNode.node_order);
 
+      // REVERT LOGIC: Restore form data from history for the target node (prevEditableNode)
+      const { data: revertHistory } = await supabase
+        .from('diary_entry_history')
+        .select('form_data')
+        .eq('diary_id', diaryId)
+        .eq('node_order', prevEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting diary ${diaryId} to data from node ${prevEditableNode.node_order}`);
+        
+        await supabase
+          .from('diary_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', diaryId);
+
+        // Record this revert in history
+        await supabase
+          .from('diary_entry_history')
+          .insert([{
+            diary_id: diaryId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `back_to_node_${prevEditableNode.node_order}`,
+            node_order: prevEditableNode.node_order
+          }]);
+      }
+
+      // Move back to previous node
       await supabase
         .from('diary_entries')
         .update({ 
@@ -1227,5 +1301,91 @@ MatrixTwin Notification System
     console.error('Error details:', JSON.stringify(error, null, 2));
   }
 }
+
+/**
+ * @route   POST /api/diary/:diaryId/restore
+ * @desc    Restore diary entry from history
+ * @access  Private
+ */
+router.post('/:diaryId/restore', auth, disableRLS, async (req, res) => {
+  try {
+    const { diaryId } = req.params;
+    const { historyId } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    // Get history entry
+    const { data: historyEntry, error: historyError } = await supabase
+      .from('diary_entry_history')
+      .select('*')
+      .eq('id', historyId)
+      .eq('diary_id', diaryId)
+      .single();
+
+    if (historyError || !historyEntry) {
+      return res.status(404).json({ error: 'History entry not found' });
+    }
+
+    // Get current diary entry
+    const { data: diary, error: diaryError } = await supabase
+      .from('diary_entries')
+      .select('*')
+      .eq('id', diaryId)
+      .single();
+
+    if (diaryError || !diary) {
+      return res.status(404).json({ error: 'Diary entry not found' });
+    }
+
+    // Check permissions (same as update)
+    const canUpdate = req.user.role === 'admin' || 
+                      diary.created_by === userId;
+    
+    if (!canUpdate) {
+      return res.status(403).json({ error: 'No permission to restore this diary entry' });
+    }
+
+    // Update main entry with historical data
+    const { error: updateError } = await supabase
+      .from('diary_entries')
+      .update({
+        form_data: historyEntry.form_data,
+        updated_at: new Date().toISOString(),
+        // Restore flattened fields
+        work_completed: historyEntry.form_data.activities?.map(a => a.activity).join(', ') || diary.work_completed,
+        incidents_reported: historyEntry.form_data.comments || diary.incidents_reported,
+        materials_delivered: historyEntry.form_data.utilities || diary.materials_delivered,
+        notes: historyEntry.form_data.remarks || diary.notes
+      })
+      .eq('id', diaryId);
+
+    if (updateError) throw updateError;
+
+    // Record this restoration in history
+    await supabase
+      .from('diary_entry_history')
+      .insert([{
+        diary_id: diaryId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: historyEntry.form_data,
+        change_reason: `restored_from_${historyId}`,
+        node_order: diary.current_node_index
+      }]);
+
+    res.json({
+      success: true,
+      message: 'Diary entry restored successfully',
+      data: historyEntry.form_data
+    });
+
+  } catch (error) {
+    console.error('Error restoring diary entry:', error);
+    res.status(500).json({ 
+      error: 'Failed to restore diary entry',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router;

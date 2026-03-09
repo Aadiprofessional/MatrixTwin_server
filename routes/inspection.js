@@ -505,7 +505,8 @@ router.put('/:inspectionId/update', auth, disableRLS, async (req, res) => {
         changed_by: userId,
         changed_at: new Date().toISOString(),
         form_data: formData,
-        change_reason: action || 'update'
+        change_reason: action || 'update',
+        node_order: currentNode ? currentNode.node_order : null
       };
 
       const { error: historyError } = await supabase
@@ -672,6 +673,40 @@ router.put('/:inspectionId/update', auth, disableRLS, async (req, res) => {
         });
       }
 
+      // REVERT LOGIC: Restore form data from history for the target node
+      const { data: revertHistory } = await supabase
+        .from('inspection_entry_history')
+        .select('form_data')
+        .eq('inspection_id', inspectionId)
+        .eq('node_order', firstEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting inspection ${inspectionId} to data from node ${firstEditableNode.node_order}`);
+        
+        await supabase
+          .from('inspection_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', inspectionId);
+
+        // Record this revert in history
+        await supabase
+          .from('inspection_entry_history')
+          .insert([{
+            inspection_id: inspectionId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `revert_to_node_${firstEditableNode.node_order}`,
+            node_order: firstEditableNode.node_order
+          }]);
+      }
+
       // Send back to first editable node
       await supabase
         .from('inspection_entries')
@@ -731,6 +766,41 @@ router.put('/:inspectionId/update', auth, disableRLS, async (req, res) => {
         .eq('inspection_id', inspectionId)
         .eq('node_order', prevEditableNode.node_order);
 
+      // REVERT LOGIC: Restore form data from history for the target node (prevEditableNode)
+      const { data: revertHistory } = await supabase
+        .from('inspection_entry_history')
+        .select('form_data')
+        .eq('inspection_id', inspectionId)
+        .eq('node_order', prevEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting inspection ${inspectionId} to data from node ${prevEditableNode.node_order}`);
+        
+        await supabase
+          .from('inspection_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', inspectionId);
+
+        // Record this revert in history
+        await supabase
+          .from('inspection_entry_history')
+          .insert([{
+            inspection_id: inspectionId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `back_to_node_${prevEditableNode.node_order}`,
+            node_order: prevEditableNode.node_order
+          }]);
+      }
+
+      // Move back to previous node
       await supabase
         .from('inspection_entries')
         .update({ 
@@ -1260,5 +1330,104 @@ MatrixTwin Notification System
     console.error('Error details:', JSON.stringify(error, null, 2));
   }
 }
+
+/**
+ * @route   POST /api/inspection/:inspectionId/restore
+ * @desc    Restore inspection entry from history
+ * @access  Private
+ */
+router.post('/:inspectionId/restore', auth, disableRLS, async (req, res) => {
+  try {
+    const { inspectionId } = req.params;
+    const { historyId } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    // Get history entry
+    const { data: historyEntry, error: historyError } = await supabase
+      .from('inspection_entry_history')
+      .select('*')
+      .eq('id', historyId)
+      .eq('inspection_id', inspectionId)
+      .single();
+
+    if (historyError || !historyEntry) {
+      return res.status(404).json({ error: 'History entry not found' });
+    }
+
+    // Get current inspection entry
+    const { data: inspection, error: inspectionError } = await supabase
+      .from('inspection_entries')
+      .select('*')
+      .eq('id', inspectionId)
+      .single();
+
+    if (inspectionError || !inspection) {
+      return res.status(404).json({ error: 'Inspection entry not found' });
+    }
+
+    // Check permissions (same as update)
+    const canUpdate = req.user.role === 'admin' || 
+                      inspection.created_by === userId;
+    
+    if (!canUpdate) {
+      return res.status(403).json({ error: 'No permission to restore this inspection entry' });
+    }
+
+    // Update main entry with historical data
+    const { error: updateError } = await supabase
+      .from('inspection_entries')
+      .update({
+        form_data: historyEntry.form_data,
+        updated_at: new Date().toISOString(),
+        // Restore flattened fields
+        contract_no: historyEntry.form_data.contractNo || inspection.contract_no,
+        risc_no: historyEntry.form_data.riscNo || inspection.risc_no,
+        revision: historyEntry.form_data.revision || inspection.revision,
+        supervisor: historyEntry.form_data.supervisor || inspection.supervisor,
+        attention: historyEntry.form_data.attention || inspection.attention,
+        location: historyEntry.form_data.location || inspection.location,
+        works_to_be_inspected: historyEntry.form_data.worksToBeInspected || inspection.works_to_be_inspected,
+        works_category: historyEntry.form_data.worksCategory || inspection.works_category,
+        inspection_time: historyEntry.form_data.inspectionTime || inspection.inspection_time,
+        next_operation: historyEntry.form_data.nextOperation || inspection.next_operation,
+        general_cleaning: historyEntry.form_data.generalCleaning || inspection.general_cleaning,
+        scheduled_time: historyEntry.form_data.scheduledTime || inspection.scheduled_time,
+        scheduled_date: historyEntry.form_data.scheduledDate || inspection.scheduled_date,
+        equipment: historyEntry.form_data.equipment || inspection.equipment,
+        no_objection: historyEntry.form_data.noObjection !== undefined ? historyEntry.form_data.noObjection : inspection.no_objection,
+        deficiencies_noted: historyEntry.form_data.deficienciesNoted !== undefined ? historyEntry.form_data.deficienciesNoted : inspection.deficiencies_noted,
+        deficiencies: historyEntry.form_data.deficiencies || inspection.deficiencies
+      })
+      .eq('id', inspectionId);
+
+    if (updateError) throw updateError;
+
+    // Record this restoration in history
+    await supabase
+      .from('inspection_entry_history')
+      .insert([{
+        inspection_id: inspectionId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: historyEntry.form_data,
+        change_reason: `restored_from_${historyId}`,
+        node_order: inspection.current_node_index
+      }]);
+
+    res.json({
+      success: true,
+      message: 'Inspection entry restored successfully',
+      data: historyEntry.form_data
+    });
+
+  } catch (error) {
+    console.error('Error restoring inspection entry:', error);
+    res.status(500).json({ 
+      error: 'Failed to restore inspection entry',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router; 

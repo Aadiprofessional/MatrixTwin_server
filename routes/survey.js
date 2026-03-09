@@ -502,7 +502,8 @@ router.put('/:surveyId/update', auth, disableRLS, async (req, res) => {
         changed_by: userId,
         changed_at: new Date().toISOString(),
         form_data: formData,
-        change_reason: action || 'update'
+        change_reason: action || 'update',
+        node_order: currentNode ? currentNode.node_order : null
       };
 
       const { error: historyError } = await supabase
@@ -668,6 +669,40 @@ router.put('/:surveyId/update', auth, disableRLS, async (req, res) => {
         });
       }
 
+      // REVERT LOGIC: Restore form data from history for the target node
+      const { data: revertHistory } = await supabase
+        .from('survey_entry_history')
+        .select('form_data')
+        .eq('survey_id', surveyId)
+        .eq('node_order', firstEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting survey ${surveyId} to data from node ${firstEditableNode.node_order}`);
+        
+        await supabase
+          .from('survey_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', surveyId);
+
+        // Record this revert in history
+        await supabase
+          .from('survey_entry_history')
+          .insert([{
+            survey_id: surveyId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `revert_to_node_${firstEditableNode.node_order}`,
+            node_order: firstEditableNode.node_order
+          }]);
+      }
+
       // Send back to first editable node
       await supabase
         .from('survey_entries')
@@ -727,6 +762,41 @@ router.put('/:surveyId/update', auth, disableRLS, async (req, res) => {
         .eq('survey_id', surveyId)
         .eq('node_order', prevEditableNode.node_order);
 
+      // REVERT LOGIC: Restore form data from history for the target node (prevEditableNode)
+      const { data: revertHistory } = await supabase
+        .from('survey_entry_history')
+        .select('form_data')
+        .eq('survey_id', surveyId)
+        .eq('node_order', prevEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting survey ${surveyId} to data from node ${prevEditableNode.node_order}`);
+        
+        await supabase
+          .from('survey_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', surveyId);
+
+        // Record this revert in history
+        await supabase
+          .from('survey_entry_history')
+          .insert([{
+            survey_id: surveyId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `back_to_node_${prevEditableNode.node_order}`,
+            node_order: prevEditableNode.node_order
+          }]);
+      }
+
+      // Move back to previous node
       await supabase
         .from('survey_entries')
         .update({ 
@@ -1256,5 +1326,103 @@ MatrixTwin Notification System
     console.error('Error details:', JSON.stringify(error, null, 2));
   }
 }
+
+/**
+ * @route   POST /api/survey/:surveyId/restore
+ * @desc    Restore survey entry from history
+ * @access  Private
+ */
+router.post('/:surveyId/restore', auth, disableRLS, async (req, res) => {
+  try {
+    const { surveyId } = req.params;
+    const { historyId } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    // Get history entry
+    const { data: historyEntry, error: historyError } = await supabase
+      .from('survey_entry_history')
+      .select('*')
+      .eq('id', historyId)
+      .eq('survey_id', surveyId)
+      .single();
+
+    if (historyError || !historyEntry) {
+      return res.status(404).json({ error: 'History entry not found' });
+    }
+
+    // Get current survey entry
+    const { data: survey, error: surveyError } = await supabase
+      .from('survey_entries')
+      .select('*')
+      .eq('id', surveyId)
+      .single();
+
+    if (surveyError || !survey) {
+      return res.status(404).json({ error: 'Survey entry not found' });
+    }
+
+    // Check permissions (same as update)
+    const canUpdate = req.user.role === 'admin' || 
+                      survey.created_by === userId;
+    
+    if (!canUpdate) {
+      return res.status(403).json({ error: 'No permission to restore this survey entry' });
+    }
+
+    // Update main entry with historical data
+    const { error: updateError } = await supabase
+      .from('survey_entries')
+      .update({
+        form_data: historyEntry.form_data,
+        updated_at: new Date().toISOString(),
+        // Restore flattened fields
+        contract_no: historyEntry.form_data.contractNo || survey.contract_no,
+        risc_no: historyEntry.form_data.riscNo || survey.risc_no,
+        revision: historyEntry.form_data.revision || survey.revision,
+        supervisor: historyEntry.form_data.supervisor || survey.supervisor,
+        attention: historyEntry.form_data.attention || survey.attention,
+        location: historyEntry.form_data.location || survey.location,
+        survey_field: historyEntry.form_data.survey || survey.survey_field,
+        works_category: historyEntry.form_data.worksCategory || survey.works_category,
+        survey_time: historyEntry.form_data.surveyTime || historyEntry.form_data.inspectionTime || survey.survey_time,
+        next_operation: historyEntry.form_data.nextOperation || survey.next_operation,
+        scheduled_time: historyEntry.form_data.scheduledTime || survey.scheduled_time,
+        scheduled_date: historyEntry.form_data.scheduledDate || survey.scheduled_date,
+        equipment: historyEntry.form_data.equipment || survey.equipment,
+        no_objection: historyEntry.form_data.noObjection !== undefined ? historyEntry.form_data.noObjection : survey.no_objection,
+        deficiencies_noted: historyEntry.form_data.deficienciesNoted !== undefined ? historyEntry.form_data.deficienciesNoted : survey.deficiencies_noted,
+        deficiencies: historyEntry.form_data.deficiencies || survey.deficiencies
+      })
+      .eq('id', surveyId);
+
+    if (updateError) throw updateError;
+
+    // Record this restoration in history
+    await supabase
+      .from('survey_entry_history')
+      .insert([{
+        survey_id: surveyId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: historyEntry.form_data,
+        change_reason: `restored_from_${historyId}`,
+        node_order: survey.current_node_index
+      }]);
+
+    res.json({
+      success: true,
+      message: 'Survey entry restored successfully',
+      data: historyEntry.form_data
+    });
+
+  } catch (error) {
+    console.error('Error restoring survey entry:', error);
+    res.status(500).json({ 
+      error: 'Failed to restore survey entry',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router; 

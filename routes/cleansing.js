@@ -503,7 +503,8 @@ router.put('/:cleansingId/update', auth, disableRLS, async (req, res) => {
         changed_by: userId,
         changed_at: new Date().toISOString(),
         form_data: formData,
-        change_reason: action || 'update'
+        change_reason: action || 'update',
+        node_order: currentNode ? currentNode.node_order : null
       };
 
       const { error: historyError } = await supabase
@@ -659,6 +660,40 @@ router.put('/:cleansingId/update', auth, disableRLS, async (req, res) => {
         });
       }
 
+      // REVERT LOGIC: Restore form data from history for the target node
+      const { data: revertHistory } = await supabase
+        .from('cleansing_entry_history')
+        .select('form_data')
+        .eq('cleansing_id', cleansingId)
+        .eq('node_order', firstEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting cleansing ${cleansingId} to data from node ${firstEditableNode.node_order}`);
+        
+        await supabase
+          .from('cleansing_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', cleansingId);
+
+        // Record this revert in history
+        await supabase
+          .from('cleansing_entry_history')
+          .insert([{
+            cleansing_id: cleansingId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `revert_to_node_${firstEditableNode.node_order}`,
+            node_order: firstEditableNode.node_order
+          }]);
+      }
+
       // Send back to first editable node
       await supabase
         .from('cleansing_entries')
@@ -717,6 +752,40 @@ router.put('/:cleansingId/update', auth, disableRLS, async (req, res) => {
         .update({ status: 'pending' })
         .eq('cleansing_id', cleansingId)
         .eq('node_order', prevEditableNode.node_order);
+
+      // REVERT LOGIC: Restore form data from history for the target node (prevEditableNode)
+      const { data: revertHistory } = await supabase
+        .from('cleansing_entry_history')
+        .select('form_data')
+        .eq('cleansing_id', cleansingId)
+        .eq('node_order', prevEditableNode.node_order)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (revertHistory && revertHistory.form_data) {
+        console.log(`Reverting cleansing ${cleansingId} to data from node ${prevEditableNode.node_order}`);
+        
+        await supabase
+          .from('cleansing_entries')
+          .update({
+            form_data: revertHistory.form_data,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', cleansingId);
+
+        // Record this revert in history
+        await supabase
+          .from('cleansing_entry_history')
+          .insert([{
+            cleansing_id: cleansingId,
+            changed_by: userId,
+            changed_at: new Date().toISOString(),
+            form_data: revertHistory.form_data,
+            change_reason: `back_to_node_${prevEditableNode.node_order}`,
+            node_order: prevEditableNode.node_order
+          }]);
+      }
 
       await supabase
         .from('cleansing_entries')
@@ -1248,5 +1317,93 @@ MatrixTwin Notification System
     console.error('Error details:', JSON.stringify(error, null, 2));
   }
 }
+
+/**
+ * @route   POST /api/cleansing/:cleansingId/restore
+ * @desc    Restore cleansing entry from history
+ * @access  Private
+ */
+router.post('/:cleansingId/restore', auth, disableRLS, async (req, res) => {
+  try {
+    const { cleansingId } = req.params;
+    const { historyId } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    // Get history entry
+    const { data: historyEntry, error: historyError } = await supabase
+      .from('cleansing_entry_history')
+      .select('*')
+      .eq('id', historyId)
+      .eq('cleansing_id', cleansingId)
+      .single();
+
+    if (historyError || !historyEntry) {
+      return res.status(404).json({ error: 'History entry not found' });
+    }
+
+    // Get current cleansing entry
+    const { data: cleansing, error: cleansingError } = await supabase
+      .from('cleansing_entries')
+      .select('*')
+      .eq('id', cleansingId)
+      .single();
+
+    if (cleansingError || !cleansing) {
+      return res.status(404).json({ error: 'Cleansing entry not found' });
+    }
+
+    // Check permissions (same as update)
+    const canUpdate = req.user.role === 'admin' || 
+                      cleansing.created_by === userId;
+    
+    if (!canUpdate) {
+      return res.status(403).json({ error: 'No permission to restore this cleansing entry' });
+    }
+
+    // Update main entry with historical data
+    const { error: updateError } = await supabase
+      .from('cleansing_entries')
+      .update({
+        form_data: historyEntry.form_data,
+        updated_at: new Date().toISOString(),
+        // Restore flattened fields
+        area: historyEntry.form_data.areaInspected || cleansing.area,
+        cleanliness_score: parseInt(historyEntry.form_data.cleanlinessScore?.replace('%', '')) || cleansing.cleanliness_score,
+        cleaning_status: historyEntry.form_data.cleaningStatus || cleansing.cleaning_status,
+        areas_cleaned: historyEntry.form_data.areasRequiringCleaning || cleansing.areas_cleaned,
+        waste_removed: historyEntry.form_data.wasteRemovalRequired || cleansing.waste_removed,
+        notes: historyEntry.form_data.additionalNotes || cleansing.notes
+      })
+      .eq('id', cleansingId);
+
+    if (updateError) throw updateError;
+
+    // Record this restoration in history
+    await supabase
+      .from('cleansing_entry_history')
+      .insert([{
+        cleansing_id: cleansingId,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+        form_data: historyEntry.form_data,
+        change_reason: `restored_from_${historyId}`,
+        node_order: cleansing.current_node_index
+      }]);
+
+    res.json({
+      success: true,
+      message: 'Cleansing entry restored successfully',
+      data: historyEntry.form_data
+    });
+
+  } catch (error) {
+    console.error('Error restoring cleansing entry:', error);
+    res.status(500).json({ 
+      error: 'Failed to restore cleansing entry',
+      details: error.message 
+    });
+  }
+});
 
 module.exports = router; 

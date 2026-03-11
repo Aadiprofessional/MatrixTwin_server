@@ -958,6 +958,63 @@ router.patch('/:surveyId/expiry-status', auth, disableRLS, async (req, res) => {
   }
 });
 
+router.patch('/:surveyId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { surveyId } = req.params;
+    const { userId, name } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: survey, error: surveyError } = await supabase
+      .from('survey_entries')
+      .select('id, form_data')
+      .eq('id', surveyId)
+      .single();
+
+    if (surveyError || !survey) {
+      return res.status(404).json({ error: 'Survey entry not found' });
+    }
+
+    const { data: updatedSurvey, error: updateError } = await supabase
+      .from('survey_entries')
+      .update({
+        form_data: {
+          ...(survey.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', surveyId)
+      .select()
+      .single();
+
+    if (updateError || !updatedSurvey) {
+      return res.status(500).json({ error: 'Failed to update survey name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Survey name updated successfully',
+      data: updatedSurvey
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update survey name', details: error.message });
+  }
+});
+
 router.post('/:surveyId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { surveyId, nodeOrder } = req.params;

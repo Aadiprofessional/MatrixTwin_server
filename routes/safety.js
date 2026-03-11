@@ -947,6 +947,63 @@ router.patch('/:safetyId/expiry-status', auth, disableRLS, async (req, res) => {
   }
 });
 
+router.patch('/:safetyId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { safetyId } = req.params;
+    const { userId, name } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: safety, error: safetyError } = await supabase
+      .from('safety_entries')
+      .select('id, form_data')
+      .eq('id', safetyId)
+      .single();
+
+    if (safetyError || !safety) {
+      return res.status(404).json({ error: 'Safety entry not found' });
+    }
+
+    const { data: updatedSafety, error: updateError } = await supabase
+      .from('safety_entries')
+      .update({
+        form_data: {
+          ...(safety.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', safetyId)
+      .select()
+      .single();
+
+    if (updateError || !updatedSafety) {
+      return res.status(500).json({ error: 'Failed to update safety name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Safety name updated successfully',
+      data: updatedSafety
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update safety name', details: error.message });
+  }
+});
+
 router.post('/:safetyId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { safetyId, nodeOrder } = req.params;

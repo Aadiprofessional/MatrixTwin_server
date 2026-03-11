@@ -948,6 +948,63 @@ router.patch('/:cleansingId/expiry-status', auth, disableRLS, async (req, res) =
   }
 });
 
+router.patch('/:cleansingId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { cleansingId } = req.params;
+    const { userId, name } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: cleansing, error: cleansingError } = await supabase
+      .from('cleansing_entries')
+      .select('id, form_data')
+      .eq('id', cleansingId)
+      .single();
+
+    if (cleansingError || !cleansing) {
+      return res.status(404).json({ error: 'Cleansing entry not found' });
+    }
+
+    const { data: updatedCleansing, error: updateError } = await supabase
+      .from('cleansing_entries')
+      .update({
+        form_data: {
+          ...(cleansing.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', cleansingId)
+      .select()
+      .single();
+
+    if (updateError || !updatedCleansing) {
+      return res.status(500).json({ error: 'Failed to update cleansing name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Cleansing name updated successfully',
+      data: updatedCleansing
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update cleansing name', details: error.message });
+  }
+});
+
 router.post('/:cleansingId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { cleansingId, nodeOrder } = req.params;

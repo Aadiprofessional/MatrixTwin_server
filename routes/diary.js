@@ -941,6 +941,63 @@ router.patch('/:diaryId/expiry-status', auth, disableRLS, async (req, res) => {
   }
 });
 
+router.patch('/:diaryId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { diaryId } = req.params;
+    const { userId, name } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: diary, error: diaryError } = await supabase
+      .from('diary_entries')
+      .select('id, form_data')
+      .eq('id', diaryId)
+      .single();
+
+    if (diaryError || !diary) {
+      return res.status(404).json({ error: 'Diary entry not found' });
+    }
+
+    const { data: updatedDiary, error: updateError } = await supabase
+      .from('diary_entries')
+      .update({
+        form_data: {
+          ...(diary.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', diaryId)
+      .select()
+      .single();
+
+    if (updateError || !updatedDiary) {
+      return res.status(500).json({ error: 'Failed to update diary name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Diary name updated successfully',
+      data: updatedDiary
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update diary name', details: error.message });
+  }
+});
+
 router.post('/:diaryId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { diaryId, nodeOrder } = req.params;

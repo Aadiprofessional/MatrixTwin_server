@@ -1026,6 +1026,64 @@ router.patch('/entries/:entryId/expiry-status', auth, disableRLS, async (req, re
   }
 });
 
+router.patch('/entries/:entryId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const { name } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: entry, error: entryError } = await supabase
+      .from('form_entries')
+      .select('id, form_data')
+      .eq('id', entryId)
+      .single();
+
+    if (entryError || !entry) {
+      return res.status(404).json({ error: 'Form entry not found' });
+    }
+
+    const { data: updatedEntry, error: updateError } = await supabase
+      .from('form_entries')
+      .update({
+        form_data: {
+          ...(entry.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', entryId)
+      .select()
+      .single();
+
+    if (updateError || !updatedEntry) {
+      return res.status(500).json({ error: 'Failed to update form name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Form name updated successfully',
+      data: updatedEntry
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update form name', details: error.message });
+  }
+});
+
 router.post('/entries/:entryId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { entryId, nodeOrder } = req.params;

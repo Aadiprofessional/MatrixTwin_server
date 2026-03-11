@@ -962,6 +962,63 @@ router.patch('/:inspectionId/expiry-status', auth, disableRLS, async (req, res) 
   }
 });
 
+router.patch('/:inspectionId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { inspectionId } = req.params;
+    const { userId, name } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: inspection, error: inspectionError } = await supabase
+      .from('inspection_entries')
+      .select('id, form_data')
+      .eq('id', inspectionId)
+      .single();
+
+    if (inspectionError || !inspection) {
+      return res.status(404).json({ error: 'Inspection entry not found' });
+    }
+
+    const { data: updatedInspection, error: updateError } = await supabase
+      .from('inspection_entries')
+      .update({
+        form_data: {
+          ...(inspection.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', inspectionId)
+      .select()
+      .single();
+
+    if (updateError || !updatedInspection) {
+      return res.status(500).json({ error: 'Failed to update inspection name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Inspection name updated successfully',
+      data: updatedInspection
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update inspection name', details: error.message });
+  }
+});
+
 router.post('/:inspectionId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { inspectionId, nodeOrder } = req.params;

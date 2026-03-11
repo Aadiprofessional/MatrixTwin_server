@@ -948,6 +948,63 @@ router.patch('/:labourId/expiry-status', auth, disableRLS, async (req, res) => {
   }
 });
 
+router.patch('/:labourId/name', auth, disableRLS, async (req, res) => {
+  try {
+    const { labourId } = req.params;
+    const { userId, name } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update form name' });
+    }
+
+    const { data: labour, error: labourError } = await supabase
+      .from('labour_entries')
+      .select('id, form_data')
+      .eq('id', labourId)
+      .single();
+
+    if (labourError || !labour) {
+      return res.status(404).json({ error: 'Labour entry not found' });
+    }
+
+    const { data: updatedLabour, error: updateError } = await supabase
+      .from('labour_entries')
+      .update({
+        form_data: {
+          ...(labour.form_data || {}),
+          name: trimmedName
+        }
+      })
+      .eq('id', labourId)
+      .select()
+      .single();
+
+    if (updateError || !updatedLabour) {
+      return res.status(500).json({ error: 'Failed to update labour name' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Labour name updated successfully',
+      data: updatedLabour
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update labour name', details: error.message });
+  }
+});
+
 router.post('/:labourId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
   try {
     const { labourId, nodeOrder } = req.params;

@@ -3,7 +3,7 @@ const router = express.Router();
 const { auth } = require('../middleware/auth');
 const { createClient } = require('@supabase/supabase-js');
 const { sendEmail } = require('../utils/email');
-const { createFormAssignmentNotifications } = require('./notifications');
+const { createFormAssignmentNotifications, createNotification } = require('./notifications');
 
 // Middleware to temporarily disable RLS for inspection operations
 const disableRLS = async (req, res, next) => {
@@ -40,6 +40,30 @@ const disableRLS = async (req, res, next) => {
     next();
   }
 };
+
+const DEFAULT_EXPIRY_DAYS = 10;
+const getDefaultExpiryDate = () => {
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + DEFAULT_EXPIRY_DAYS);
+  return expiry.toISOString();
+};
+
+const isTerminalStatus = (status) => ['completed', 'permanently_rejected', 'expired'].includes(status);
+
+async function autoExpireInspectionEntries(supabase) {
+  const now = new Date().toISOString();
+  await supabase
+    .from('inspection_entries')
+    .update({
+      status: 'expired',
+      expired_at: now
+    })
+    .lte('expires_at', now)
+    .not('expires_at', 'is', null)
+    .neq('status', 'expired')
+    .neq('status', 'completed')
+    .neq('status', 'permanently_rejected');
+}
 
 /**
  * @route   POST /api/inspection/create
@@ -111,6 +135,7 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       },
       created_by: createdBy,
       created_at: new Date().toISOString(),
+      expires_at: getDefaultExpiryDate(),
       status: 'pending',
       current_node_index: 1,
       current_active_node: processNodes.find(n => n.type === 'node')?.id || null
@@ -279,6 +304,7 @@ router.get('/list/:userId', auth, disableRLS, async (req, res) => {
     const { projectId } = req.query;
 
     const supabase = req.supabaseAdmin || req.supabase;
+    await autoExpireInspectionEntries(supabase);
 
     // Get user role
     const { data: user, error: userError } = await supabase
@@ -381,6 +407,7 @@ router.get('/:inspectionId', auth, disableRLS, async (req, res) => {
   try {
     const { inspectionId } = req.params;
     const supabase = req.supabaseAdmin || req.supabase;
+    await autoExpireInspectionEntries(supabase);
 
     const { data: inspection, error: inspectionError } = await supabase
       .from('inspection_entries')
@@ -457,6 +484,7 @@ router.put('/:inspectionId/update', auth, disableRLS, async (req, res) => {
     } = req.body;
 
     const supabase = req.supabaseAdmin || req.supabase;
+    await autoExpireInspectionEntries(supabase);
 
     // Get current inspection entry
     const { data: inspection, error: inspectionError } = await supabase
@@ -471,6 +499,22 @@ router.put('/:inspectionId/update', auth, disableRLS, async (req, res) => {
 
     if (inspectionError || !inspection) {
       return res.status(404).json({ error: 'Inspection entry not found' });
+    }
+
+    if (inspection.expires_at && new Date(inspection.expires_at) <= new Date() && !isTerminalStatus(inspection.status)) {
+      await supabase
+        .from('inspection_entries')
+        .update({
+          status: 'expired',
+          expired_at: new Date().toISOString()
+        })
+        .eq('id', inspectionId);
+
+      return res.status(400).json({ error: 'Inspection entry has expired' });
+    }
+
+    if (inspection.status === 'expired') {
+      return res.status(400).json({ error: 'Inspection entry has expired' });
     }
 
     // Get user info
@@ -824,6 +868,177 @@ router.put('/:inspectionId/update', auth, disableRLS, async (req, res) => {
       error: 'Failed to update inspection entry',
       details: error.message 
     });
+  }
+});
+
+router.patch('/:inspectionId/expiry', auth, disableRLS, async (req, res) => {
+  try {
+    const { inspectionId } = req.params;
+    const { userId, expiresAt } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    if (!expiresAt) {
+      return res.status(400).json({ error: 'expiresAt is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can set expiry date' });
+    }
+
+    const expiryDate = new Date(expiresAt);
+    if (Number.isNaN(expiryDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid expiresAt value' });
+    }
+
+    const { data: updatedInspection, error: updateError } = await supabase
+      .from('inspection_entries')
+      .update({
+        expires_at: expiryDate.toISOString(),
+        status: expiryDate > new Date() ? 'pending' : 'expired',
+        expired_at: expiryDate > new Date() ? null : new Date().toISOString()
+      })
+      .eq('id', inspectionId)
+      .select()
+      .single();
+
+    if (updateError || !updatedInspection) {
+      return res.status(404).json({ error: 'Inspection entry not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Inspection expiry date updated successfully',
+      data: updatedInspection
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update expiry date', details: error.message });
+  }
+});
+
+router.patch('/:inspectionId/expiry-status', auth, disableRLS, async (req, res) => {
+  try {
+    const { inspectionId } = req.params;
+    const { userId, active } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can change expiry status' });
+    }
+
+    const updatePayload = active
+      ? { status: 'pending', expired_at: null }
+      : { status: 'expired', expired_at: new Date().toISOString() };
+
+    const { data: updatedInspection, error: updateError } = await supabase
+      .from('inspection_entries')
+      .update(updatePayload)
+      .eq('id', inspectionId)
+      .select()
+      .single();
+
+    if (updateError || !updatedInspection) {
+      return res.status(404).json({ error: 'Inspection entry not found' });
+    }
+
+    res.json({
+      success: true,
+      message: active ? 'Inspection entry reactivated successfully' : 'Inspection entry marked as expired',
+      data: updatedInspection
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update inspection status', details: error.message });
+  }
+});
+
+router.post('/:inspectionId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
+  try {
+    const { inspectionId, nodeOrder } = req.params;
+    const { userId, message } = req.body;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: inspection, error: inspectionError } = await supabase
+      .from('inspection_entries')
+      .select(`
+        *,
+        inspection_workflow_nodes(*),
+        inspection_assignments(*)
+      `)
+      .eq('id', inspectionId)
+      .single();
+
+    if (inspectionError || !inspection) {
+      return res.status(404).json({ error: 'Inspection entry not found' });
+    }
+
+    const { data: requester } = await supabase
+      .from('users')
+      .select('role, name')
+      .eq('id', userId)
+      .single();
+
+    if (!requester) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const targetNodeOrder = parseInt(nodeOrder, 10);
+    const targetNode = inspection.inspection_workflow_nodes.find(n => n.node_order === targetNodeOrder);
+
+    if (!targetNode) {
+      return res.status(404).json({ error: 'Node not found' });
+    }
+
+    const canNotify = requester.role === 'admin' || inspection.created_by === userId || targetNode.executor_id === userId;
+    if (!canNotify) {
+      return res.status(403).json({ error: 'No permission to send delay notification for this node' });
+    }
+
+    const recipientIds = new Set();
+    if (targetNode.executor_id) {
+      recipientIds.add(targetNode.executor_id);
+    }
+    inspection.inspection_assignments
+      .filter(a => a.node_order === targetNodeOrder)
+      .forEach(a => recipientIds.add(a.user_id));
+
+    const finalMessage = message || `Delay reported on node ${targetNode.node_name} for inspection entry ${inspection.id}`;
+
+    for (const recipientId of recipientIds) {
+      await createNotification(supabase, {
+        userId: recipientId,
+        title: `Delay Alert: ${targetNode.node_name}`,
+        message: finalMessage,
+        type: 'warning',
+        formType: 'inspection',
+        formId: inspection.id,
+        projectId: inspection.project_id,
+        actionUrl: '/inspection',
+        metadata: {
+          action: 'delay_alert',
+          nodeOrder: targetNodeOrder,
+          triggeredBy: requester.name
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Delay notifications sent successfully',
+      notifiedUsers: recipientIds.size
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send delay notifications', details: error.message });
   }
 });
 

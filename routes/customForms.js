@@ -45,7 +45,7 @@ if (typeof Headers === 'undefined') {
   };
 }
 
-const { createFormAssignmentNotifications } = require('./notifications');
+const { createFormAssignmentNotifications, createNotification } = require('./notifications');
 
 // Middleware to temporarily disable RLS for form operations
 const disableRLS = async (req, res, next) => {
@@ -82,6 +82,30 @@ const disableRLS = async (req, res, next) => {
     next();
   }
 };
+
+const DEFAULT_EXPIRY_DAYS = 10;
+const getDefaultExpiryDate = () => {
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + DEFAULT_EXPIRY_DAYS);
+  return expiry.toISOString();
+};
+
+const isTerminalStatus = (status) => ['completed', 'permanently_rejected', 'expired'].includes(status);
+
+async function autoExpireFormEntries(supabase) {
+  const now = new Date().toISOString();
+  await supabase
+    .from('form_entries')
+    .update({
+      status: 'expired',
+      expired_at: now
+    })
+    .lte('expires_at', now)
+    .not('expires_at', 'is', null)
+    .neq('status', 'expired')
+    .neq('status', 'completed')
+    .neq('status', 'permanently_rejected');
+}
 
 /**
  * @route   POST /api/custom-forms/templates/create
@@ -275,6 +299,7 @@ router.post('/entries/create', auth, disableRLS, async (req, res) => {
         name: name || formData.name || formData.formNumber // Ensure name is saved
       },
       created_by: req.user.id === 'dev-user-id' ? '5fcf581f-f854-459b-b521-aae507891337' : req.user.id,
+      expires_at: getDefaultExpiryDate(),
       status: 'pending',
       current_node_index: 1,
       current_active_node: processNodes.find(n => n.type === 'node')?.id || null
@@ -419,6 +444,7 @@ router.get('/entries/:userId', auth, disableRLS, async (req, res) => {
     const { projectId } = req.query;
 
     const supabase = req.supabaseAdmin || req.supabase;
+    await autoExpireFormEntries(supabase);
 
     // Get user role
     const { data: user, error: userError } = await supabase
@@ -505,6 +531,7 @@ router.get('/entries/details/:entryId', auth, disableRLS, async (req, res) => {
   try {
     const { entryId } = req.params;
     const supabase = req.supabaseAdmin || req.supabase;
+    await autoExpireFormEntries(supabase);
 
     const { data: entry, error: entryError } = await supabase
       .from('form_entries')
@@ -579,8 +606,9 @@ router.put('/entries/:entryId/update', auth, disableRLS, async (req, res) => {
       comment
     } = req.body;
 
-    const userId = req.user.id; // Get from authenticated user
+    const userId = req.user.id;
     const supabase = req.supabaseAdmin || req.supabase;
+    await autoExpireFormEntries(supabase);
 
     // Get current form entry
     const { data: entry, error: entryError } = await supabase
@@ -595,6 +623,22 @@ router.put('/entries/:entryId/update', auth, disableRLS, async (req, res) => {
 
     if (entryError || !entry) {
       return res.status(404).json({ error: 'Form entry not found' });
+    }
+
+    if (entry.expires_at && new Date(entry.expires_at) <= new Date() && !isTerminalStatus(entry.status)) {
+      await supabase
+        .from('form_entries')
+        .update({
+          status: 'expired',
+          expired_at: new Date().toISOString()
+        })
+        .eq('id', entryId);
+
+      return res.status(400).json({ error: 'Form entry has expired' });
+    }
+
+    if (entry.status === 'expired') {
+      return res.status(400).json({ error: 'Form entry has expired' });
     }
 
     // Get user info
@@ -886,6 +930,180 @@ router.put('/entries/:entryId/update', auth, disableRLS, async (req, res) => {
       error: 'Failed to update form entry',
       details: error.message 
     });
+  }
+});
+
+router.patch('/entries/:entryId/expiry', auth, disableRLS, async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const { expiresAt } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    if (!expiresAt) {
+      return res.status(400).json({ error: 'expiresAt is required' });
+    }
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can set expiry date' });
+    }
+
+    const expiryDate = new Date(expiresAt);
+    if (Number.isNaN(expiryDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid expiresAt value' });
+    }
+
+    const { data: updatedEntry, error: updateError } = await supabase
+      .from('form_entries')
+      .update({
+        expires_at: expiryDate.toISOString(),
+        status: expiryDate > new Date() ? 'pending' : 'expired',
+        expired_at: expiryDate > new Date() ? null : new Date().toISOString()
+      })
+      .eq('id', entryId)
+      .select()
+      .single();
+
+    if (updateError || !updatedEntry) {
+      return res.status(404).json({ error: 'Form entry not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Form expiry date updated successfully',
+      data: updatedEntry
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update expiry date', details: error.message });
+  }
+});
+
+router.patch('/entries/:entryId/expiry-status', auth, disableRLS, async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const { active } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can change expiry status' });
+    }
+
+    const updatePayload = active
+      ? { status: 'pending', expired_at: null }
+      : { status: 'expired', expired_at: new Date().toISOString() };
+
+    const { data: updatedEntry, error: updateError } = await supabase
+      .from('form_entries')
+      .update(updatePayload)
+      .eq('id', entryId)
+      .select()
+      .single();
+
+    if (updateError || !updatedEntry) {
+      return res.status(404).json({ error: 'Form entry not found' });
+    }
+
+    res.json({
+      success: true,
+      message: active ? 'Form entry reactivated successfully' : 'Form entry marked as expired',
+      data: updatedEntry
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update form status', details: error.message });
+  }
+});
+
+router.post('/entries/:entryId/nodes/:nodeOrder/delay-notify', auth, disableRLS, async (req, res) => {
+  try {
+    const { entryId, nodeOrder } = req.params;
+    const { message } = req.body;
+    const userId = req.user.id;
+    const supabase = req.supabaseAdmin || req.supabase;
+
+    const { data: entry, error: entryError } = await supabase
+      .from('form_entries')
+      .select(`
+        *,
+        form_workflow_nodes(*),
+        form_assignments(*)
+      `)
+      .eq('id', entryId)
+      .single();
+
+    if (entryError || !entry) {
+      return res.status(404).json({ error: 'Form entry not found' });
+    }
+
+    const { data: requester } = await supabase
+      .from('users')
+      .select('role, name')
+      .eq('id', userId)
+      .single();
+
+    if (!requester) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const targetNodeOrder = parseInt(nodeOrder, 10);
+    const targetNode = entry.form_workflow_nodes.find(n => n.node_order === targetNodeOrder);
+
+    if (!targetNode) {
+      return res.status(404).json({ error: 'Node not found' });
+    }
+
+    const canNotify = requester.role === 'admin' || entry.created_by === userId || targetNode.executor_id === userId;
+    if (!canNotify) {
+      return res.status(403).json({ error: 'No permission to send delay notification for this node' });
+    }
+
+    const recipientIds = new Set();
+    if (targetNode.executor_id) {
+      recipientIds.add(targetNode.executor_id);
+    }
+    entry.form_assignments
+      .filter(a => a.node_order === targetNodeOrder)
+      .forEach(a => recipientIds.add(a.user_id));
+
+    const finalMessage = message || `Delay reported on node ${targetNode.node_name} for form entry ${entry.id}`;
+
+    for (const recipientId of recipientIds) {
+      await createNotification(supabase, {
+        userId: recipientId,
+        title: `Delay Alert: ${targetNode.node_name}`,
+        message: finalMessage,
+        type: 'warning',
+        formType: 'custom_form',
+        formId: entry.id,
+        projectId: entry.project_id,
+        actionUrl: '/custom-forms',
+        metadata: {
+          action: 'delay_alert',
+          nodeOrder: targetNodeOrder,
+          triggeredBy: requester.name
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Delay notifications sent successfully',
+      notifiedUsers: recipientIds.size
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send delay notifications', details: error.message });
   }
 });
 

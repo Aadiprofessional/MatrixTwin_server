@@ -923,9 +923,14 @@ router.patch('/:cleansingId/expiry-status', auth, disableRLS, async (req, res) =
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const now = new Date();
+    const reactivatedExpiresAt = new Date(now);
+    reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
+    const nowIso = now.toISOString();
+
     const updatePayload = active
-      ? { status: 'pending', expired_at: null }
-      : { status: 'expired', expired_at: new Date().toISOString() };
+      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
+      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
 
     const { data: updatedCleansing, error: updateError } = await supabase
       .from('cleansing_entries')
@@ -971,7 +976,7 @@ router.patch('/:cleansingId/name', auth, disableRLS, async (req, res) => {
 
     const { data: cleansing, error: cleansingError } = await supabase
       .from('cleansing_entries')
-      .select('id, form_data')
+      .select('id, project')
       .eq('id', cleansingId)
       .single();
 
@@ -982,10 +987,7 @@ router.patch('/:cleansingId/name', auth, disableRLS, async (req, res) => {
     const { data: updatedCleansing, error: updateError } = await supabase
       .from('cleansing_entries')
       .update({
-        form_data: {
-          ...(cleansing.form_data || {}),
-          name: trimmedName
-        }
+        project: trimmedName
       })
       .eq('id', cleansingId)
       .select()

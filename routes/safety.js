@@ -922,9 +922,14 @@ router.patch('/:safetyId/expiry-status', auth, disableRLS, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const now = new Date();
+    const reactivatedExpiresAt = new Date(now);
+    reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
+    const nowIso = now.toISOString();
+
     const updatePayload = active
-      ? { status: 'pending', expired_at: null }
-      : { status: 'expired', expired_at: new Date().toISOString() };
+      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
+      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
 
     const { data: updatedSafety, error: updateError } = await supabase
       .from('safety_entries')
@@ -970,7 +975,7 @@ router.patch('/:safetyId/name', auth, disableRLS, async (req, res) => {
 
     const { data: safety, error: safetyError } = await supabase
       .from('safety_entries')
-      .select('id, form_data')
+      .select('id, project')
       .eq('id', safetyId)
       .single();
 
@@ -981,10 +986,7 @@ router.patch('/:safetyId/name', auth, disableRLS, async (req, res) => {
     const { data: updatedSafety, error: updateError } = await supabase
       .from('safety_entries')
       .update({
-        form_data: {
-          ...(safety.form_data || {}),
-          name: trimmedName
-        }
+        project: trimmedName
       })
       .eq('id', safetyId)
       .select()

@@ -923,9 +923,14 @@ router.patch('/:labourId/expiry-status', auth, disableRLS, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const now = new Date();
+    const reactivatedExpiresAt = new Date(now);
+    reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
+    const nowIso = now.toISOString();
+
     const updatePayload = active
-      ? { status: 'pending', expired_at: null }
-      : { status: 'expired', expired_at: new Date().toISOString() };
+      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
+      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
 
     const { data: updatedLabour, error: updateError } = await supabase
       .from('labour_entries')
@@ -971,7 +976,7 @@ router.patch('/:labourId/name', auth, disableRLS, async (req, res) => {
 
     const { data: labour, error: labourError } = await supabase
       .from('labour_entries')
-      .select('id, form_data')
+      .select('id, project')
       .eq('id', labourId)
       .single();
 
@@ -982,10 +987,7 @@ router.patch('/:labourId/name', auth, disableRLS, async (req, res) => {
     const { data: updatedLabour, error: updateError } = await supabase
       .from('labour_entries')
       .update({
-        form_data: {
-          ...(labour.form_data || {}),
-          name: trimmedName
-        }
+        project: trimmedName
       })
       .eq('id', labourId)
       .select()

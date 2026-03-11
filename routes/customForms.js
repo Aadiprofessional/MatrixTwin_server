@@ -1001,9 +1001,14 @@ router.patch('/entries/:entryId/expiry-status', auth, disableRLS, async (req, re
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const now = new Date();
+    const reactivatedExpiresAt = new Date(now);
+    reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
+    const nowIso = now.toISOString();
+
     const updatePayload = active
-      ? { status: 'pending', expired_at: null }
-      : { status: 'expired', expired_at: new Date().toISOString() };
+      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
+      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
 
     const { data: updatedEntry, error: updateError } = await supabase
       .from('form_entries')
@@ -1050,7 +1055,7 @@ router.patch('/entries/:entryId/name', auth, disableRLS, async (req, res) => {
 
     const { data: entry, error: entryError } = await supabase
       .from('form_entries')
-      .select('id, form_data')
+      .select('id, project_name')
       .eq('id', entryId)
       .single();
 
@@ -1061,10 +1066,7 @@ router.patch('/entries/:entryId/name', auth, disableRLS, async (req, res) => {
     const { data: updatedEntry, error: updateError } = await supabase
       .from('form_entries')
       .update({
-        form_data: {
-          ...(entry.form_data || {}),
-          name: trimmedName
-        }
+        project_name: trimmedName
       })
       .eq('id', entryId)
       .select()

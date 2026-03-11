@@ -916,9 +916,14 @@ router.patch('/:diaryId/expiry-status', auth, disableRLS, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const now = new Date();
+    const reactivatedExpiresAt = new Date(now);
+    reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
+    const nowIso = now.toISOString();
+
     const updatePayload = active
-      ? { status: 'pending', expired_at: null }
-      : { status: 'expired', expired_at: new Date().toISOString() };
+      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
+      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
 
     const { data: updatedDiary, error: updateError } = await supabase
       .from('diary_entries')
@@ -964,7 +969,7 @@ router.patch('/:diaryId/name', auth, disableRLS, async (req, res) => {
 
     const { data: diary, error: diaryError } = await supabase
       .from('diary_entries')
-      .select('id, form_data')
+      .select('id, project')
       .eq('id', diaryId)
       .single();
 
@@ -975,10 +980,7 @@ router.patch('/:diaryId/name', auth, disableRLS, async (req, res) => {
     const { data: updatedDiary, error: updateError } = await supabase
       .from('diary_entries')
       .update({
-        form_data: {
-          ...(diary.form_data || {}),
-          name: trimmedName
-        }
+        project: trimmedName
       })
       .eq('id', diaryId)
       .select()

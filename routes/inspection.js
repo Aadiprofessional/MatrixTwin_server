@@ -937,9 +937,14 @@ router.patch('/:inspectionId/expiry-status', auth, disableRLS, async (req, res) 
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const now = new Date();
+    const reactivatedExpiresAt = new Date(now);
+    reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
+    const nowIso = now.toISOString();
+
     const updatePayload = active
-      ? { status: 'pending', expired_at: null }
-      : { status: 'expired', expired_at: new Date().toISOString() };
+      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
+      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
 
     const { data: updatedInspection, error: updateError } = await supabase
       .from('inspection_entries')
@@ -985,7 +990,7 @@ router.patch('/:inspectionId/name', auth, disableRLS, async (req, res) => {
 
     const { data: inspection, error: inspectionError } = await supabase
       .from('inspection_entries')
-      .select('id, form_data')
+      .select('id, project')
       .eq('id', inspectionId)
       .single();
 
@@ -996,10 +1001,7 @@ router.patch('/:inspectionId/name', auth, disableRLS, async (req, res) => {
     const { data: updatedInspection, error: updateError } = await supabase
       .from('inspection_entries')
       .update({
-        form_data: {
-          ...(inspection.form_data || {}),
-          name: trimmedName
-        }
+        project: trimmedName
       })
       .eq('id', inspectionId)
       .select()

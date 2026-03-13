@@ -243,7 +243,8 @@ router.post('/entries/create', auth, disableRLS, async (req, res) => {
       formData,
       projectId,
       formId,
-      name
+      name,
+      expiresAt
     } = req.body;
 
     console.log('=== FORM ENTRY CREATION START ===');
@@ -287,20 +288,30 @@ router.post('/entries/create', auth, disableRLS, async (req, res) => {
 
     const processNodes = template.form_structure.workflow || [];
 
-    // Create form entry
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    const expiryDate = expiresAt ? new Date(expiresAt) : null;
+    if (expiresAt && Number.isNaN(expiryDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid expiresAt value' });
+    }
+
+    const now = new Date();
+    const resolvedExpiresAt = expiryDate ? expiryDate.toISOString() : getDefaultExpiryDate();
+    const isExpiredOnCreate = expiryDate ? expiryDate <= now : false;
+
     const formEntry = {
       ...(formId ? { id: formId } : {}), // Use formId if provided
       template_id: templateId,
       template_name: template.name,
       project_id: projectId,
-      project_name: projectId || formData.projectId || formData.projectName || 'Unknown Project',
+      project_name: trimmedName || projectId || formData.projectId || formData.projectName || 'Unknown Project',
       form_data: {
         ...formData,
-        name: name || formData.name || formData.formNumber // Ensure name is saved
+        name: trimmedName || formData.name || formData.formNumber
       },
       created_by: req.user.id === 'dev-user-id' ? '5fcf581f-f854-459b-b521-aae507891337' : req.user.id,
-      expires_at: getDefaultExpiryDate(),
-      status: 'pending',
+      expires_at: resolvedExpiresAt,
+      expired_at: isExpiredOnCreate ? now.toISOString() : null,
+      status: isExpiredOnCreate ? 'expired' : 'pending',
       current_node_index: 1,
       current_active_node: processNodes.find(n => n.type === 'node')?.id || null
     };

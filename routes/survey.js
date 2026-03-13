@@ -76,7 +76,8 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       createdBy,
       projectId,
       formId,
-      name
+      name,
+      expiresAt
     } = req.body;
 
     console.log('=== SURVEY CREATION START ===');
@@ -103,11 +104,20 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can create survey entries' });
     }
 
-    // Create survey entry
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    const expiryDate = expiresAt ? new Date(expiresAt) : null;
+    if (expiresAt && Number.isNaN(expiryDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid expiresAt value' });
+    }
+
+    const now = new Date();
+    const resolvedExpiresAt = expiryDate ? expiryDate.toISOString() : getDefaultExpiryDate();
+    const isExpiredOnCreate = expiryDate ? expiryDate <= now : false;
+
     const surveyEntry = {
       id: formId || `survey_${Date.now()}`,
       date: formData.surveyDate || formData.inspectionDate || new Date().toISOString().split('T')[0],
-      project: projectId || formData.projectId || 'Unknown Project',
+      project: trimmedName || projectId || formData.projectId || 'Unknown Project',
       project_id: projectId,
       surveyor: formData.surveyor || formData.surveyedBy || user.name,
       contract_no: formData.contractNo || '',
@@ -128,12 +138,13 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       deficiencies: formData.deficiencies || [],
       form_data: {
         ...formData,
-        name: name || formData.name || formData.formNumber // Ensure name is saved
+        name: trimmedName || formData.name || formData.formNumber
       },
       created_by: createdBy,
       created_at: new Date().toISOString(),
-      expires_at: getDefaultExpiryDate(),
-      status: 'pending',
+      expires_at: resolvedExpiresAt,
+      expired_at: isExpiredOnCreate ? now.toISOString() : null,
+      status: isExpiredOnCreate ? 'expired' : 'pending',
       current_node_index: 1,
       current_active_node: processNodes.find(n => n.type === 'node')?.id || null
     };

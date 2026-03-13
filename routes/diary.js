@@ -76,7 +76,9 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       formData, 
       processNodes, 
       createdBy,
-      projectId
+      projectId,
+      name,
+      expiresAt
     } = req.body;
 
     console.log('=== DIARY CREATION START ===');
@@ -103,11 +105,20 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can create diary entries' });
     }
 
-    // Create diary entry
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    const expiryDate = expiresAt ? new Date(expiresAt) : null;
+    if (expiresAt && Number.isNaN(expiryDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid expiresAt value' });
+    }
+
+    const now = new Date();
+    const resolvedExpiresAt = expiryDate ? expiryDate.toISOString() : getDefaultExpiryDate();
+    const isExpiredOnCreate = expiryDate ? expiryDate <= now : false;
+
     const diaryEntry = {
       id: `diary_${Date.now()}`,
       date: formData.date || new Date().toISOString().split('T')[0],
-      project: formData.contractNo || 'Unknown Project',
+      project: trimmedName || formData.contractNo || 'Unknown Project',
       project_id: projectId,
       author: user.name,
       weather: formData.weatherAM || 'Not specified',
@@ -116,11 +127,15 @@ router.post('/create', auth, disableRLS, async (req, res) => {
       incidents_reported: formData.comments || '',
       materials_delivered: formData.utilities || '',
       notes: formData.remarks || '',
-      form_data: formData,
+      form_data: {
+        ...formData,
+        name: trimmedName || formData.name || formData.formNumber || null
+      },
       created_by: createdBy,
       created_at: new Date().toISOString(),
-      expires_at: getDefaultExpiryDate(),
-      status: 'pending',
+      expires_at: resolvedExpiresAt,
+      expired_at: isExpiredOnCreate ? now.toISOString() : null,
+      status: isExpiredOnCreate ? 'expired' : 'pending',
       current_node_index: 1,
       current_active_node: processNodes.find(n => n.type === 'node')?.id || null
     };

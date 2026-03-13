@@ -25,6 +25,7 @@ const adminRoutes = require('./routes/admin');
 const companyRoutes = require('./routes/companies');
 const adminRequestRoutes = require('./routes/adminRequests');
 const globalFormRoutes = require('./routes/global-forms');
+const userUploadRoutes = require('./routes/user-uploads');
 
 const app = express();
 
@@ -140,6 +141,7 @@ app.use('/api/safety', safetyRoutes);
 app.use('/api/inspection', inspectionRoutes);
 app.use('/api/survey', surveyRoutes);
 app.use('/api/global-forms', globalFormRoutes);
+app.use('/api/uploads', userUploadRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

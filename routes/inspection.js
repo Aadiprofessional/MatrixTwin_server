@@ -948,16 +948,19 @@ router.patch('/:inspectionId/expiry-status', auth, disableRLS, async (req, res) 
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const isActive = active === true || active === 'true';
     const now = new Date();
     const reactivatedExpiresAt = new Date(now);
     reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
     const nowIso = now.toISOString();
+    const targetExpiresAt = isActive ? reactivatedExpiresAt.toISOString() : nowIso;
+    const targetExpiredAt = isActive ? null : nowIso;
 
-    const updatePayload = active
-      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
-      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
+    const updatePayload = isActive
+      ? { status: 'pending', expires_at: targetExpiresAt, expired_at: targetExpiredAt }
+      : { status: 'expired', expires_at: targetExpiresAt, expired_at: targetExpiredAt };
 
-    const { data: updatedInspection, error: updateError } = await supabase
+    let { data: updatedInspection, error: updateError } = await supabase
       .from('inspection_entries')
       .update(updatePayload)
       .eq('id', inspectionId)
@@ -968,9 +971,29 @@ router.patch('/:inspectionId/expiry-status', auth, disableRLS, async (req, res) 
       return res.status(404).json({ error: 'Inspection entry not found' });
     }
 
+    const shouldForceSync = isActive
+      ? !updatedInspection.expires_at || new Date(updatedInspection.expires_at) <= now
+      : !updatedInspection.expires_at || !updatedInspection.expired_at;
+
+    if (shouldForceSync) {
+      const { data: syncedInspection, error: syncError } = await supabase
+        .from('inspection_entries')
+        .update({
+          expires_at: targetExpiresAt,
+          expired_at: targetExpiredAt
+        })
+        .eq('id', inspectionId)
+        .select()
+        .single();
+
+      if (!syncError && syncedInspection) {
+        updatedInspection = syncedInspection;
+      }
+    }
+
     res.json({
       success: true,
-      message: active ? 'Inspection entry reactivated successfully' : 'Inspection entry marked as expired',
+      message: isActive ? 'Inspection entry reactivated successfully' : 'Inspection entry marked as expired',
       data: updatedInspection
     });
   } catch (error) {

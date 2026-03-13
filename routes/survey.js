@@ -944,16 +944,19 @@ router.patch('/:surveyId/expiry-status', auth, disableRLS, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can change expiry status' });
     }
 
+    const isActive = active === true || active === 'true';
     const now = new Date();
     const reactivatedExpiresAt = new Date(now);
     reactivatedExpiresAt.setDate(reactivatedExpiresAt.getDate() + 10);
     const nowIso = now.toISOString();
+    const targetExpiresAt = isActive ? reactivatedExpiresAt.toISOString() : nowIso;
+    const targetExpiredAt = isActive ? null : nowIso;
 
-    const updatePayload = active
-      ? { status: 'pending', expires_at: reactivatedExpiresAt.toISOString(), expired_at: null }
-      : { status: 'expired', expires_at: nowIso, expired_at: nowIso };
+    const updatePayload = isActive
+      ? { status: 'pending', expires_at: targetExpiresAt, expired_at: targetExpiredAt }
+      : { status: 'expired', expires_at: targetExpiresAt, expired_at: targetExpiredAt };
 
-    const { data: updatedSurvey, error: updateError } = await supabase
+    let { data: updatedSurvey, error: updateError } = await supabase
       .from('survey_entries')
       .update(updatePayload)
       .eq('id', surveyId)
@@ -964,9 +967,29 @@ router.patch('/:surveyId/expiry-status', auth, disableRLS, async (req, res) => {
       return res.status(404).json({ error: 'Survey entry not found' });
     }
 
+    const shouldForceSync = isActive
+      ? !updatedSurvey.expires_at || new Date(updatedSurvey.expires_at) <= now
+      : !updatedSurvey.expires_at || !updatedSurvey.expired_at;
+
+    if (shouldForceSync) {
+      const { data: syncedSurvey, error: syncError } = await supabase
+        .from('survey_entries')
+        .update({
+          expires_at: targetExpiresAt,
+          expired_at: targetExpiredAt
+        })
+        .eq('id', surveyId)
+        .select()
+        .single();
+
+      if (!syncError && syncedSurvey) {
+        updatedSurvey = syncedSurvey;
+      }
+    }
+
     res.json({
       success: true,
-      message: active ? 'Survey entry reactivated successfully' : 'Survey entry marked as expired',
+      message: isActive ? 'Survey entry reactivated successfully' : 'Survey entry marked as expired',
       data: updatedSurvey
     });
   } catch (error) {

@@ -26,6 +26,7 @@ const companyRoutes = require('./routes/companies');
 const adminRequestRoutes = require('./routes/adminRequests');
 const globalFormRoutes = require('./routes/global-forms');
 const userUploadRoutes = require('./routes/user-uploads');
+const aiHtmlRoutes = require('./routes/aiHtmlRoutes');
 
 const app = express();
 
@@ -142,6 +143,7 @@ app.use('/api/inspection', inspectionRoutes);
 app.use('/api/survey', surveyRoutes);
 app.use('/api/global-forms', globalFormRoutes);
 app.use('/api/uploads', userUploadRoutes);
+app.use('/api/ai-html', aiHtmlRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

@@ -2,6 +2,34 @@ const express = require('express');
 const router = express.Router();
 const HTMLtoDOCX = require('html-to-docx');
 const xlsx = require('xlsx');
+const { v4: uuidv4 } = require('uuid');
+
+// Helper to upload file to Supabase Storage
+const uploadToSupabase = async (supabase, buffer, fileName, contentType) => {
+  if (!supabase) throw new Error('Supabase client not available');
+  
+  // Use 'user-uploads' bucket or fallback to 'temp-files' if needed
+  // Assuming 'user-uploads' exists as seen in other routes
+  const BUCKET_NAME = 'user-uploads';
+  const filePath = `generated-docs/${fileName}`;
+  
+  const { data, error } = await supabase
+    .storage
+    .from(BUCKET_NAME)
+    .upload(filePath, buffer, {
+      contentType: contentType,
+      upsert: false
+    });
+
+  if (error) throw error;
+  
+  const { data: { publicUrl } } = supabase
+    .storage
+    .from(BUCKET_NAME)
+    .getPublicUrl(filePath);
+
+  return publicUrl;
+};
 
 // DOCX conversion endpoint
 router.post('/htmlToDocx', async (req, res) => {
@@ -21,20 +49,33 @@ router.post('/htmlToDocx', async (req, res) => {
       pageNumber: true,
     });
 
-    const base64Data = fileBuffer.toString('base64');
-    const fileName = `document_${Date.now()}.docx`;
-    
-    // In a real production environment, you might upload this to S3/Supabase storage
-    // For now, we return the base64 data directly or a data URI
-    
-    // Construct a data URI for client-side download
-    const fileUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${base64Data}`;
+    const fileName = `document_${uuidv4()}.docx`;
+    let fileUrl;
+
+    // Try to upload to Supabase if client is available
+    if (req.supabase) {
+      try {
+        fileUrl = await uploadToSupabase(
+          req.supabase, 
+          fileBuffer, 
+          fileName, 
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        );
+      } catch (uploadError) {
+        console.error('Supabase upload failed, falling back to data URI:', uploadError);
+        // Fallback to base64 if upload fails
+        fileUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${fileBuffer.toString('base64')}`;
+      }
+    } else {
+      console.warn('Supabase client missing, using data URI');
+      fileUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${fileBuffer.toString('base64')}`;
+    }
 
     return res.status(200).json({
       success: true,
       data: {
         fileUrl,
-        fileBase64: base64Data,
+        fileBase64: fileBuffer.toString('base64'),
         fileName
       }
     });
@@ -67,17 +108,32 @@ router.post('/csvToXlsx', async (req, res) => {
     // Write workbook to buffer
     const fileBuffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
     
-    const base64Data = fileBuffer.toString('base64');
-    const fileName = `spreadsheet_${Date.now()}.xlsx`;
+    const fileName = `spreadsheet_${uuidv4()}.xlsx`;
+    let fileUrl;
     
-    // Construct a data URI for client-side download
-    const fileUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64Data}`;
+    // Try to upload to Supabase if client is available
+    if (req.supabase) {
+      try {
+        fileUrl = await uploadToSupabase(
+          req.supabase, 
+          fileBuffer, 
+          fileName, 
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+      } catch (uploadError) {
+        console.error('Supabase upload failed, falling back to data URI:', uploadError);
+        fileUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${fileBuffer.toString('base64')}`;
+      }
+    } else {
+      console.warn('Supabase client missing, using data URI');
+      fileUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${fileBuffer.toString('base64')}`;
+    }
 
     return res.status(200).json({
       success: true,
       data: {
         fileUrl,
-        fileBase64: base64Data,
+        fileBase64: fileBuffer.toString('base64'),
         fileName
       }
     });

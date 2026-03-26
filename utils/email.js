@@ -1,12 +1,16 @@
 const nodemailer = require('nodemailer');
 
-// Create transporter
+const smtpPort = Number(process.env.SMTP_PORT || 587);
+const smtpUser = process.env.SMTP_USER || process.env.SMTP_ADMIN_EMAIL;
+const smtpSenderName = process.env.SMTP_SENDER_NAME || 'MatrixAI Global';
+const smtpFromEmail = process.env.SMTP_ADMIN_EMAIL || smtpUser;
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: false, // true for 465, false for other ports
+  port: smtpPort,
+  secure: smtpPort === 465,
   auth: {
-    user: process.env.SMTP_USER,
+    user: smtpUser,
     pass: process.env.SMTP_PASS,
   },
 });
@@ -21,7 +25,7 @@ const transporter = nodemailer.createTransport({
 const sendEmail = async (to, subject, text, html) => {
   try {
     const info = await transporter.sendMail({
-      from: `"${process.env.SMTP_SENDER_NAME}" <${process.env.SMTP_USER}>`,
+      from: `"${smtpSenderName}" <${smtpFromEmail}>`,
       to,
       subject,
       text,

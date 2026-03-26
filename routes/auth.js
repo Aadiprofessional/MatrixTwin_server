@@ -3,8 +3,9 @@ const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
+const crypto = require('crypto');
 const { auth, adminOnly } = require('../middleware/auth');
+const { sendEmail } = require('../utils/email');
 
 // Simple in-memory rate limiter for password reset
 const passwordResetAttempts = {};
@@ -21,6 +22,52 @@ const VALID_ROLES = {
 
 // Default role for new signups - will be 'user' if no roles exist
 const DEFAULT_ROLE = 'user';
+const EMAIL_CONFIRM_TOKEN_EXPIRES_IN = '24h';
+const EMAIL_CONFIRM_TOKEN_SECRET = process.env.EMAIL_CONFIRM_TOKEN_SECRET || process.env.JWT_SECRET || 'jwtsecrettoken';
+const DEFAULT_CONFIRM_URL = 'https://matrixtwin.com/api/auth/confirm-email';
+const DEFAULT_LOGIN_URL = 'https://matrixtwin.com/login';
+
+function buildConfirmEmailHtml(name, confirmUrl) {
+  return `<div style="background:#f4f7fb;padding:40px 20px;font-family:Inter,Arial,sans-serif;">
+    <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.08);">
+      <div style="background:linear-gradient(135deg,#0062C3,#1f8fff);padding:28px 32px;color:#ffffff;">
+        <h1 style="margin:0;font-size:24px;line-height:1.3;">Confirm your MatrixTwin account</h1>
+      </div>
+      <div style="padding:30px 32px;color:#1f2937;">
+        <p style="margin:0 0 16px 0;font-size:16px;">Hi ${name},</p>
+        <p style="margin:0 0 20px 0;font-size:15px;line-height:1.7;">Thanks for signing up. Please confirm your email to activate your account and start using MatrixTwin.</p>
+        <a href="${confirmUrl}" style="display:inline-block;background:#0062C3;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;">Confirm Email</a>
+        <p style="margin:20px 0 0 0;font-size:13px;color:#6b7280;line-height:1.6;">If the button does not work, copy and paste this link into your browser:<br><span style="word-break:break-all;color:#111827;">${confirmUrl}</span></p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderConfirmPage({ status, title, message, buttonLabel, buttonUrl }) {
+  const bg = status === 'success' ? '#ecfdf3' : '#fef2f2';
+  const color = status === 'success' ? '#065f46' : '#991b1b';
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${title}</title>
+  </head>
+  <body style="margin:0;background:#f4f7fb;font-family:Inter,Arial,sans-serif;">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;">
+      <div style="max-width:560px;width:100%;background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.08);overflow:hidden;">
+        <div style="background:${bg};padding:24px 28px;">
+          <h1 style="margin:0;color:${color};font-size:24px;">${title}</h1>
+        </div>
+        <div style="padding:24px 28px;color:#1f2937;">
+          <p style="margin:0 0 20px 0;line-height:1.7;">${message}</p>
+          <a href="${buttonUrl}" style="display:inline-block;background:#0062C3;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;">${buttonLabel}</a>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`;
+}
 
 // Clear expired entries periodically
 setInterval(() => {
@@ -112,113 +159,69 @@ router.post(
         }
       }
 
-      // Sign up user using Supabase Auth
-      // Note: We rely on a Postgres Trigger to create the record in public.users table
-      // This is safer and ensures consistency without needing Service Role keys on the client
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { data: created, error: adminError } = await supabase.auth.admin.createUser({
         email,
         password,
-        options: {
-          emailRedirectTo: 'https://matrixtwin.com/login',
-          data: {
-            name,
-            role: DEFAULT_ROLE,
-            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0062C3&color=fff`
-          }
+        email_confirm: false,
+        user_metadata: {
+          name,
+          role: DEFAULT_ROLE,
+          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0062C3&color=fff`
         }
       });
 
-      if (authError) {
-        console.error('Supabase Auth Error:', JSON.stringify(authError));
-        return res.status(400).json({ message: authError.message || 'Signup failed' });
+      if (adminError) {
+        return res.status(400).json({ message: adminError.message || 'Signup failed' });
       }
 
-      if (authData.user) {
-        // If company code was provided, create a join request
+      if (created.user) {
+        const tokenNonce = crypto.randomBytes(16).toString('hex');
+        const confirmToken = jwt.sign(
+          {
+            uid: created.user.id,
+            email,
+            nonce: tokenNonce
+          },
+          EMAIL_CONFIRM_TOKEN_SECRET,
+          { expiresIn: EMAIL_CONFIRM_TOKEN_EXPIRES_IN }
+        );
+        const confirmBaseUrl = process.env.EMAIL_CONFIRMATION_URL || DEFAULT_CONFIRM_URL;
+        const separator = confirmBaseUrl.includes('?') ? '&' : '?';
+        const confirmUrl = `${confirmBaseUrl}${separator}token=${encodeURIComponent(confirmToken)}`;
+
+        await sendEmail(
+          email,
+          'Confirm your MatrixTwin account',
+          'Please open this email in an HTML-capable client.',
+          buildConfirmEmailHtml(name, confirmUrl)
+        );
         if (companyId) {
             try {
-                // We use a scoped client if the user is authenticated (session available)
-                // If not, we fall back to RPC or simply fail gracefully (user confirms email first)
-                if (authData.session) {
-                    const supabaseUrl = process.env.SUPABASE_URL;
-                    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-                    
-                    if (!supabaseUrl || !supabaseAnonKey) {
-                        console.error('Missing Supabase URL or Anon Key for user client creation');
-                    } else {
-                        const userClient = createClient(
-                            supabaseUrl,
-                            supabaseAnonKey,
-                            {
-                                global: {
-                                    headers: {
-                                        Authorization: `Bearer ${authData.session.access_token}`
-                                    }
-                                }
-                            }
-                        );
-                        
-                        const { error: joinError } = await userClient
-                            .from('company_join_requests')
-                            .insert({
-                                company_id: companyId,
-                                user_id: authData.user.id,
-                                status: 'pending'
-                            });
-                        
-                        if (joinError) {
-                            console.error('Error creating join request with user session:', joinError);
-                        } else {
-                            console.log('Join request created successfully for user:', authData.user.id);
-                        }
-                    }
-                } else {
-                    // Try using RPC if no session (e.g. email confirm required)
-                    // Note: RPC must be SECURITY DEFINER to bypass RLS
-                    const { error: rpcJoinError } = await supabase.rpc('create_join_request_by_code', {
-                        company_code: company_code.toUpperCase().trim(),
-                        p_user_id: authData.user.id
-                    });
-                    
-                    if (rpcJoinError) {
-                        console.error('Error creating join request via RPC (User not logged in yet):', rpcJoinError);
-                        // This is expected if the RPC doesn't exist or permissions block it.
-                        // The user can request to join later manually.
-                    } else {
-                         console.log('Join request created via RPC for user:', authData.user.id);
-                    }
+                const { error: joinError } = await supabase
+                  .from('company_join_requests')
+                  .insert({
+                    company_id: companyId,
+                    user_id: created.user.id,
+                    status: 'pending'
+                  });
+                if (joinError) {
+                  console.error('Join request error:', joinError);
                 }
             } catch (joinErr) {
                 console.error('Exception creating join request:', joinErr);
             }
         }
 
-        // Create JWT with user data
-        const token = jwt.sign(
-          { 
-            id: authData.user.id, 
-            role: DEFAULT_ROLE,
-            sb_token: authData.session?.access_token // Store Supabase access token if available
-          },
-          process.env.JWT_SECRET || 'jwtsecrettoken',
-          { expiresIn: '1d' }
-        );
-
-        res.status(201).json({
-          token,
+        return res.status(201).json({
+          message: 'Signup successful. Please confirm your email before logging in.',
           user: {
-            id: authData.user.id,
+            id: created.user.id,
             name,
-            email,
-            role: DEFAULT_ROLE,
-            avatar: authData.user.user_metadata?.avatar
+            email
           }
         });
-      } else {
-        res.status(200).json({
-          message: 'Please check your email to confirm your registration'
-        });
       }
+      return res.status(400).json({ message: 'Signup failed' });
     } catch (err) {
       console.error('Signup error:', err);
       res.status(500).json({ 
@@ -228,6 +231,76 @@ router.post(
     }
   }
 );
+
+router.get('/confirm-email', async (req, res) => {
+  const loginUrl = process.env.FRONTEND_LOGIN_URL || DEFAULT_LOGIN_URL;
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+
+  if (!token) {
+    return res.status(400).send(
+      renderConfirmPage({
+        status: 'error',
+        title: 'Invalid confirmation link',
+        message: 'This link is missing required information.',
+        buttonLabel: 'Go to Login',
+        buttonUrl: loginUrl
+      })
+    );
+  }
+
+  try {
+    const decoded = jwt.verify(token, EMAIL_CONFIRM_TOKEN_SECRET);
+    const userId = decoded?.uid;
+
+    if (!userId) {
+      return res.status(400).send(
+        renderConfirmPage({
+          status: 'error',
+          title: 'Invalid confirmation token',
+          message: 'This confirmation link is not valid.',
+          buttonLabel: 'Go to Login',
+          buttonUrl: loginUrl
+        })
+      );
+    }
+
+    const { error: updateError } = await req.supabase.auth.admin.updateUserById(userId, {
+      email_confirm: true
+    });
+
+    if (updateError) {
+      return res.status(400).send(
+        renderConfirmPage({
+          status: 'error',
+          title: 'Confirmation failed',
+          message: 'We could not confirm your email. Please request a new confirmation email.',
+          buttonLabel: 'Go to Login',
+          buttonUrl: loginUrl
+        })
+      );
+    }
+
+    return res.status(200).send(
+      renderConfirmPage({
+        status: 'success',
+        title: 'Email confirmed',
+        message: 'Your email has been confirmed successfully. You can now sign in.',
+        buttonLabel: 'Login',
+        buttonUrl: loginUrl
+      })
+    );
+  } catch (error) {
+    return res.status(400).send(
+      renderConfirmPage({
+        status: 'error',
+        title: 'Link expired',
+        message: 'This confirmation link has expired or is invalid.',
+        buttonLabel: 'Go to Login',
+        buttonUrl: loginUrl
+      })
+    );
+  }
+});
 
 /**
  * @route   POST /api/auth/login
@@ -258,11 +331,22 @@ router.post(
 
       if (authError) {
         console.error('Auth Error:', authError);
+        if ((authError.message || '').toLowerCase().includes('email not confirmed')) {
+          return res.status(403).json({ message: 'Please confirm your email before logging in' });
+        }
         return res.status(400).json({ message: 'Invalid credentials' });
       }
 
       if (!authData?.user?.id) {
         return res.status(400).json({ message: 'Authentication failed' });
+      }
+
+      const { data: adminUserData, error: adminUserError } = await supabase.auth.admin.getUserById(authData.user.id);
+      const emailConfirmedAt = authData.user.email_confirmed_at || adminUserData?.user?.email_confirmed_at;
+
+      if (adminUserError || !emailConfirmedAt) {
+        await supabase.auth.signOut();
+        return res.status(403).json({ message: 'Please confirm your email before logging in' });
       }
 
       // Get user data directly

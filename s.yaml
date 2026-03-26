@@ -26,8 +26,16 @@ services:
           SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFodGFyZGt0Y2FtZndnanV3bWViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NTMxMjk4MiwiZXhwIjoyMDYwODg4OTgyfQ.ij2Mtjtcxt8o3sDO4xYaWfyOa30QTS0VIIDjGp_9b6c
           JWT_SECRET: 6bFuNsTm9yckcFZixLORkDJ4CPNu/ZmzNqTZeN2Sxk3YXWzIhPE+Ebg6LfN+tl68MDhtI31FMk3zV0a0tzAo5Q==
           NODE_ENV: development
-          EMAIL_CONFIRM_REDIRECT_URL: http://localhost:3000/auth/confirm
+          EMAIL_CONFIRM_REDIRECT_URL: https://matrixtwin.com/login
+          EMAIL_CONFIRMATION_URL: https://matrixtwin.com/api/auth/confirm-email
+          FRONTEND_LOGIN_URL: https://matrixtwin.com/login
           PASSWORD_RESET_REDIRECT_URL: http://localhost:3000/auth/reset-password
+          SMTP_ADMIN_EMAIL: noreply@matrixaiglobal.com
+          SMTP_HOST: smtp.hostinger.com
+          SMTP_PASS: "MatrixAI888*"
+          SMTP_PORT: "587"
+          SMTP_SENDER_NAME: "MatrixAI Global"
+          SMTP_USER: noreply@matrixaiglobal.com
         events:
           - name: httpTrigger
             type: http

@@ -119,7 +119,7 @@ router.post(
         email,
         password,
         options: {
-          emailRedirectTo: process.env.EMAIL_CONFIRM_REDIRECT_URL,
+          emailRedirectTo: 'https://matrixtwin.com/login',
           data: {
             name,
             role: DEFAULT_ROLE,

@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { auth, adminOnly } = require('../middleware/auth');
+const { createSupabaseClient } = require('../supabase-client');
 const { sendEmail } = require('../utils/email');
 
 // Simple in-memory rate limiter for password reset
@@ -26,6 +27,17 @@ const EMAIL_CONFIRM_TOKEN_EXPIRES_IN = '24h';
 const EMAIL_CONFIRM_TOKEN_SECRET = process.env.EMAIL_CONFIRM_TOKEN_SECRET || process.env.JWT_SECRET || 'jwtsecrettoken';
 const DEFAULT_CONFIRM_URL = 'https://matrixtwin.com/api/auth/confirm-email';
 const DEFAULT_LOGIN_URL = 'https://matrixtwin.com/login';
+
+function getSupabaseAdminClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return null;
+  }
+
+  return createSupabaseClient(supabaseUrl, serviceRoleKey);
+}
 
 function buildConfirmEmailHtml(name, confirmUrl) {
   return `<div style="background:#f4f7fb;padding:40px 20px;font-family:Inter,Arial,sans-serif;">
@@ -159,7 +171,14 @@ router.post(
         }
       }
 
-      const { data: created, error: adminError } = await supabase.auth.admin.createUser({
+      const supabaseAdmin = getSupabaseAdminClient();
+      if (!supabaseAdmin) {
+        return res.status(500).json({
+          message: 'Signup is temporarily unavailable due to server configuration. Missing Supabase service role key.'
+        });
+      }
+
+      const { data: created, error: adminError } = await supabaseAdmin.auth.admin.createUser({
         email,
         password,
         email_confirm: false,
@@ -264,7 +283,20 @@ router.get('/confirm-email', async (req, res) => {
       );
     }
 
-    const { error: updateError } = await req.supabase.auth.admin.updateUserById(userId, {
+    const supabaseAdmin = getSupabaseAdminClient();
+    if (!supabaseAdmin) {
+      return res.status(500).send(
+        renderConfirmPage({
+          status: 'error',
+          title: 'Server configuration issue',
+          message: 'Email confirmation is temporarily unavailable. Please try again later.',
+          buttonLabel: 'Go to Login',
+          buttonUrl: loginUrl
+        })
+      );
+    }
+
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
       email_confirm: true
     });
 
@@ -341,10 +373,8 @@ router.post(
         return res.status(400).json({ message: 'Authentication failed' });
       }
 
-      const { data: adminUserData, error: adminUserError } = await supabase.auth.admin.getUserById(authData.user.id);
-      const emailConfirmedAt = authData.user.email_confirmed_at || adminUserData?.user?.email_confirmed_at;
-
-      if (adminUserError || !emailConfirmedAt) {
+      const emailConfirmedAt = authData.user.email_confirmed_at;
+      if (!emailConfirmedAt) {
         await supabase.auth.signOut();
         return res.status(403).json({ message: 'Please confirm your email before logging in' });
       }

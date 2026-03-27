@@ -637,8 +637,45 @@ const extractCSVFromHTML = (html) => {
   }
 };
 
+const tryParseJsonString = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+};
+
+const resolveProvidedContent = (body = {}, query = {}) => {
+  const providedContent = body.input_content ||
+    body.ai_response ||
+    body.response_content ||
+    body.generated_content ||
+    body.htmlContent ||
+    body.html_content ||
+    body.content ||
+    query.input_content ||
+    query.ai_response ||
+    query.response_content ||
+    query.generated_content ||
+    query.htmlContent ||
+    query.html_content ||
+    query.content;
+
+  const csvText = body.csvText || body.csv_text || query.csvText || query.csv_text;
+  const workbookData = body.workbookData || body.xlsxData || body.sheetData || query.workbookData || query.xlsxData || query.sheetData;
+
+  return {
+    providedContent,
+    csvText,
+    workbookData
+  };
+};
+
 // Main AI HTML generation endpoint
-router.all('/generateHTML', async (req, res) => {
+const handleGenerateHtml = async (req, res) => {
   // Handle OPTIONS requests for CORS preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -651,12 +688,14 @@ router.all('/generateHTML', async (req, res) => {
     // Extract parameters from either query or body (following imageRoutes.js pattern)
     const user_prompt = req.body.user_prompt || req.query.user_prompt;
     const doc_type = req.body.doc_type || req.query.doc_type;
+    const { providedContent, csvText, workbookData } = resolveProvidedContent(req.body, req.query);
+    const hasProvidedContent = Boolean(providedContent || csvText || workbookData);
 
     // Validate required parameters
-    if (!user_prompt) {
+    if (!user_prompt && !hasProvidedContent) {
       return res.status(400).json({
         success: false,
-        message: 'user_prompt is required'
+        message: 'Provide either user_prompt or one of input_content/csvText/workbookData'
       });
     }
 
@@ -668,11 +707,138 @@ router.all('/generateHTML', async (req, res) => {
       });
     }
 
-    console.log('Generating HTML for prompt:', user_prompt);
+    console.log('Generating document request received');
     if (doc_type) {
       console.log('Requested document type:', doc_type);
     }
 
+    if (hasProvidedContent && !doc_type) {
+      return res.status(400).json({
+        success: false,
+        message: 'doc_type is required when sending pre-generated content'
+      });
+    }
+
+    // Determine base URL for API calls
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http');
+    const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '');
+    const baseUrl = hostHeader ? `${proto}://${hostHeader}` : (process.env.BASE_URL || process.env.API_URL || `${proto}://localhost:${process.env.PORT || 3000}`);
+
+    console.log(`[HTML PROCESSING] Using base URL: ${baseUrl}`);
+
+    if (hasProvidedContent) {
+      const normalizedDocType = doc_type.toLowerCase();
+
+      if (normalizedDocType === 'excel' || normalizedDocType === 'xlsx') {
+        let workbookPayload = workbookData;
+        let csvPayload = csvText;
+        let htmlPayload = null;
+
+        if (!workbookPayload && !csvPayload && providedContent) {
+          if (typeof providedContent === 'object') {
+            workbookPayload = providedContent;
+          } else if (typeof providedContent === 'string') {
+            const parsed = tryParseJsonString(providedContent);
+            if (parsed && parsed.sheets) {
+              workbookPayload = parsed;
+            } else {
+              htmlPayload = providedContent;
+            }
+          }
+        }
+
+        let processResult;
+
+        if (workbookPayload) {
+          const response = await axios.post(`${baseUrl}/api/document/csvToXlsx`, {
+            workbookData: workbookPayload
+          }, {
+            timeout: 180000,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+
+          if (!response.data || !response.data.success) {
+            return res.status(500).json({
+              success: false,
+              message: 'Failed to process workbook data for Excel conversion'
+            });
+          }
+
+          processResult = {
+            success: true,
+            type: 'excel',
+            fileUrl: response.data.data.fileUrl,
+            fileBase64: response.data.data.fileBase64,
+            fileName: response.data.data.fileName,
+            message: 'Your Excel file is ready!'
+          };
+        } else if (csvPayload) {
+          const response = await axios.post(`${baseUrl}/api/document/csvToXlsx`, {
+            csvText: csvPayload
+          }, {
+            timeout: 180000,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+
+          if (!response.data || !response.data.success) {
+            return res.status(500).json({
+              success: false,
+              message: 'Failed to process CSV content for Excel conversion'
+            });
+          }
+
+          processResult = {
+            success: true,
+            type: 'excel',
+            fileUrl: response.data.data.fileUrl,
+            fileBase64: response.data.data.fileBase64,
+            fileName: response.data.data.fileName,
+            message: 'Your Excel file is ready!'
+          };
+        } else {
+          const sanitized = sanitizeHtmlContent(htmlPayload || '');
+          const htmlWithImages = transformImagePlaceholdersToImg(sanitized);
+          processResult = await processGeneratedHTML(htmlWithImages, baseUrl, doc_type);
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: `<p>✅ ${processResult.message}</p><p>🤖 Your Excel file is ready for download.</p>`,
+          fileUrl: processResult.fileUrl,
+          fileBase64: processResult.fileBase64,
+          fileName: processResult.fileName,
+          fileType: 'excel'
+        });
+      }
+
+      const htmlString = typeof providedContent === 'string' ? providedContent : JSON.stringify(providedContent || '');
+      const sanitized = sanitizeHtmlContent(htmlString);
+      const htmlWithImages = transformImagePlaceholdersToImg(sanitized);
+      const processResult = await processGeneratedHTML(htmlWithImages, baseUrl, doc_type);
+
+      if (!processResult.success) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to process provided HTML',
+          error: processResult.error
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `<p>✅ ${processResult.message}</p><p>🤖 Your document is ready for download.</p>`,
+        fileUrl: processResult.fileUrl,
+        fileBase64: processResult.fileBase64,
+        fileName: processResult.fileName,
+        fileType: processResult.type
+      });
+    }
+
+    console.log('Generating HTML for prompt:', user_prompt);
     // Enhance prompt for Excel/spreadsheet requests
     let enhancedPrompt = user_prompt;
     if (doc_type && (doc_type.toLowerCase() === 'excel' || doc_type.toLowerCase() === 'xlsx')) {
@@ -713,13 +879,6 @@ router.all('/generateHTML', async (req, res) => {
 
     console.log('HTML generated successfully, length:', htmlResult.html.length);
 
-    // Determine base URL for API calls
-    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http');
-    const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '');
-    const baseUrl = hostHeader ? `${proto}://${hostHeader}` : (process.env.BASE_URL || process.env.API_URL || `${proto}://localhost:${process.env.PORT || 3000}`);
-
-    console.log(`[HTML PROCESSING] Using base URL: ${baseUrl}`);
-
     const sanitized = sanitizeHtmlContent(finalHTML);
     const htmlWithImages = transformImagePlaceholdersToImg(sanitized);
     const processResult = await processGeneratedHTML(htmlWithImages, baseUrl, doc_type);
@@ -757,6 +916,9 @@ router.all('/generateHTML', async (req, res) => {
       error: error.message
     });
   }
-});
+};
+
+router.all('/generateHTML', handleGenerateHtml);
+router.all('/generateHtml', handleGenerateHtml);
 
 module.exports = router;

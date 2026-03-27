@@ -31,6 +31,58 @@ const uploadToSupabase = async (supabase, buffer, fileName, contentType) => {
   return publicUrl;
 };
 
+const sanitizeSheetName = (name, fallbackIndex) => {
+  const fallback = `Sheet${fallbackIndex + 1}`;
+  const raw = typeof name === 'string' && name.trim().length > 0 ? name.trim() : fallback;
+  const cleaned = raw.replace(/[\\/?*[\]:]/g, ' ').trim();
+  const limited = cleaned.slice(0, 31);
+  return limited.length > 0 ? limited : fallback;
+};
+
+const buildWorkbookFromStructuredData = (workbookData) => {
+  if (!workbookData || typeof workbookData !== 'object' || !Array.isArray(workbookData.sheets) || workbookData.sheets.length === 0) {
+    throw new Error('workbookData.sheets is required and must contain at least one sheet');
+  }
+
+  const workbook = xlsx.utils.book_new();
+  const usedNames = new Set();
+
+  workbookData.sheets.forEach((sheet, index) => {
+    const safeSheet = sheet && typeof sheet === 'object' ? sheet : {};
+    let sheetName = sanitizeSheetName(safeSheet.name, index);
+    while (usedNames.has(sheetName)) {
+      sheetName = sanitizeSheetName(`${sheetName.slice(0, 28)}_${index + 1}`, index);
+    }
+    usedNames.add(sheetName);
+
+    const columns = Array.isArray(safeSheet.columns) ? safeSheet.columns : [];
+    const rows = Array.isArray(safeSheet.rows) ? safeSheet.rows : [];
+    const aoa = [];
+
+    if (columns.length > 0) {
+      aoa.push(columns.map((cell) => (cell === null || cell === undefined ? '' : cell)));
+    }
+
+    rows.forEach((row) => {
+      if (Array.isArray(row)) {
+        aoa.push(row.map((cell) => (cell === null || cell === undefined ? '' : cell)));
+      } else if (row && typeof row === 'object') {
+        const values = columns.length > 0
+          ? columns.map((key) => (row[key] === null || row[key] === undefined ? '' : row[key]))
+          : Object.values(row).map((value) => (value === null || value === undefined ? '' : value));
+        aoa.push(values);
+      } else {
+        aoa.push([row === null || row === undefined ? '' : row]);
+      }
+    });
+
+    const worksheet = xlsx.utils.aoa_to_sheet(aoa.length > 0 ? aoa : [[]]);
+    xlsx.utils.book_append_sheet(workbook, worksheet, sheetName);
+  });
+
+  return workbook;
+};
+
 // DOCX conversion endpoint
 router.post('/htmlToDocx', async (req, res) => {
   try {
@@ -93,17 +145,21 @@ router.post('/htmlToDocx', async (req, res) => {
 // Excel conversion endpoint
 router.post('/csvToXlsx', async (req, res) => {
   try {
-    const { csvText } = req.body;
+    const { csvText, workbookData } = req.body;
     
-    if (!csvText) {
+    if (!csvText && !workbookData) {
       return res.status(400).json({
         success: false,
-        message: 'csvText is required'
+        message: 'csvText or workbookData is required'
       });
     }
 
-    // Parse CSV to workbook
-    const workbook = xlsx.read(csvText, { type: 'string', raw: true });
+    let workbook;
+    if (workbookData) {
+      workbook = buildWorkbookFromStructuredData(workbookData);
+    } else {
+      workbook = xlsx.read(csvText, { type: 'string', raw: true });
+    }
     
     // Write workbook to buffer
     const fileBuffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });

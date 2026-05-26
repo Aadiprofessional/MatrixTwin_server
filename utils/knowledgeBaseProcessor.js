@@ -10,7 +10,7 @@ const DEEPINFRA_API_KEY = process.env.DEEPINFRA_API_KEY || 'Fy3YFDDTrOl5fH1tdx16
 const EMBEDDING_MODEL = 'Qwen/Qwen3-Embedding-8B';
 const VISION_MODEL = 'Qwen/Qwen3-VL-235B-A22B-Instruct';
 const CHUNK_SIZE = 1000;
-const CHUNK_OVERLAP = 150;
+const CHUNK_OVERLAP = 0;
 const EMBED_BATCH_SIZE = 5; // parallel embedding requests
 
 // ---------------------------------------------------------------------------
@@ -153,27 +153,50 @@ function chunkText(text, chunkSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
     .trim();
 
   if (!clean) return [];
+  if (clean.length <= chunkSize) return [clean];
 
+  const safeOverlap = Math.max(0, Math.min(overlap, chunkSize - 1));
+  const minBoundary = Math.floor(chunkSize * 0.6);
   let start = 0;
+
   while (start < clean.length) {
-    let end = Math.min(start + chunkSize, clean.length);
+    const idealEnd = Math.min(start + chunkSize, clean.length);
+    let end = idealEnd;
 
-    if (end < clean.length) {
-      // Try paragraph boundary first, then sentence, then newline
-      const para     = clean.lastIndexOf('\n\n', end);
-      const sentence = clean.lastIndexOf('. ', end);
-      const newline  = clean.lastIndexOf('\n', end);
-      const boundary = Math.max(para, sentence, newline);
+    if (idealEnd < clean.length) {
+      const searchFrom = start + minBoundary;
+      if (searchFrom < idealEnd) {
+        const para = clean.lastIndexOf('\n\n', idealEnd);
+        const line = clean.lastIndexOf('\n', idealEnd);
+        const sentence = Math.max(
+          clean.lastIndexOf('. ', idealEnd),
+          clean.lastIndexOf('! ', idealEnd),
+          clean.lastIndexOf('? ', idealEnd)
+        );
+        const space = clean.lastIndexOf(' ', idealEnd);
 
-      if (boundary > start + Math.floor(chunkSize / 3)) {
-        end = boundary + (clean[boundary] === '.' ? 2 : 1);
+        if (para >= searchFrom) end = para + 2;
+        else if (line >= searchFrom) end = line + 1;
+        else if (sentence >= searchFrom) end = sentence + 2;
+        else if (space >= searchFrom) end = space + 1;
       }
     }
 
-    const chunk = clean.substring(start, end).trim();
-    if (chunk.length > 20) chunks.push(chunk);
+    const chunk = clean.slice(start, end).trim();
+    if (chunk.length > 20 && (chunks.length === 0 || chunks[chunks.length - 1] !== chunk)) {
+      chunks.push(chunk);
+    }
 
-    start = Math.max(start + 1, end - overlap);
+    if (end >= clean.length) break;
+
+    let nextStart = end - safeOverlap;
+    if (nextStart <= start) nextStart = end;
+
+    while (nextStart < clean.length && /\s/.test(clean[nextStart])) {
+      nextStart += 1;
+    }
+
+    start = nextStart;
   }
 
   return chunks;

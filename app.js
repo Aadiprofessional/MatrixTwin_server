@@ -28,6 +28,7 @@ const globalFormRoutes = require('./routes/global-forms');
 const userUploadRoutes = require('./routes/user-uploads');
 const aiHtmlRoutes = require('./routes/aiHtmlRoutes');
 const documentRoutes = require('./routes/documentRoutes');
+const knowledgeBaseRoutes = require('./routes/knowledgeBase');
 
 const app = express();
 
@@ -146,6 +147,7 @@ app.use('/api/global-forms', globalFormRoutes);
 app.use('/api/uploads', userUploadRoutes);
 app.use('/api/ai-html', aiHtmlRoutes);
 app.use('/api/document', documentRoutes);
+app.use('/api/knowledge-base', knowledgeBaseRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

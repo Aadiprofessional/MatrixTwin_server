@@ -202,6 +202,31 @@ function chunkText(text, chunkSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
   return chunks;
 }
 
+function dedupeChunks(chunks) {
+  const seen = new Set();
+  const unique = [];
+
+  for (const chunk of chunks) {
+    const value = (chunk || '').trim();
+    if (!value) continue;
+
+    const key = value.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key || seen.has(key)) continue;
+
+    seen.add(key);
+    unique.push(value);
+  }
+
+  return unique;
+}
+
+async function extractTextByParse(fileType, fileBuffer) {
+  if (fileType === 'pdf') return extractTextFromPDF(fileBuffer);
+  if (fileType === 'docx') return extractTextFromDOCX(fileBuffer);
+  if (fileType === 'text') return fileBuffer.toString('utf8');
+  return '';
+}
+
 // ---------------------------------------------------------------------------
 // Embedding API
 // ---------------------------------------------------------------------------
@@ -290,35 +315,38 @@ async function processFile(_supabase, fileBuffer, fileName, fileType, processing
 
     } else if (processingMode === 'parse') {
       // Direct text extraction
-      let text = '';
-      if (fileType === 'pdf')       text = await extractTextFromPDF(fileBuffer);
-      else if (fileType === 'docx') text = await extractTextFromDOCX(fileBuffer);
-      else                          text = fileBuffer.toString('utf8');
+      const text = await extractTextByParse(fileType, fileBuffer);
       textChunks = chunkText(text);
 
     } else if (processingMode === 'vision') {
       // Convert every page to an image, then run vision API in parallel
       let images = null;
 
-      if (fileType === 'pdf') {
-        images = await pdfToImages(fileBuffer);
-      } else if (fileType === 'docx') {
-        images = await docxToImages(fileBuffer);
-        if (!images) {
-          // Graceful fallback: text extraction
-          console.log('[KB] DOCX vision fallback → text extraction');
-          const text = await extractTextFromDOCX(fileBuffer);
-          textChunks = chunkText(text);
+      try {
+        if (fileType === 'pdf') {
+          images = await pdfToImages(fileBuffer);
+        } else if (fileType === 'docx') {
+          images = await docxToImages(fileBuffer);
         }
+
+        if (images && images.length > 0) {
+          console.log(`[KB] Running vision API on ${images.length} page(s) in parallel...`);
+          const pageTexts = await Promise.all(images.map(img => extractTextFromImage(img)));
+          const combined = pageTexts.join('\n\n---\n\n');
+          textChunks = chunkText(combined);
+        }
+      } catch (visionError) {
+        // Common when rendering specific PDFs/DOCXs via canvas in some environments.
+        console.warn(`[KB] Vision extraction failed (${visionError.message}). Falling back to parse mode.`);
       }
 
-      if (images && images.length > 0) {
-        console.log(`[KB] Running vision API on ${images.length} page(s) in parallel...`);
-        const pageTexts = await Promise.all(images.map(img => extractTextFromImage(img)));
-        const combined = pageTexts.join('\n\n---\n\n');
-        textChunks = chunkText(combined);
+      if (textChunks.length === 0 && fileType !== 'image') {
+        const fallbackText = await extractTextByParse(fileType, fileBuffer);
+        textChunks = chunkText(fallbackText);
       }
     }
+
+    textChunks = dedupeChunks(textChunks);
 
     if (textChunks.length === 0) {
       throw new Error('No text content could be extracted from the file.');

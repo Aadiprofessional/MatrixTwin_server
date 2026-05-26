@@ -18,27 +18,66 @@ const EMBED_BATCH_SIZE = 5; // parallel embedding requests
 // ---------------------------------------------------------------------------
 
 async function extractTextFromPDF(buffer) {
-  // Support both legacy pdf-parse (callable function) and v2 API (PDFParse class).
-  const parsePdf = typeof pdfParse === 'function' ? pdfParse : pdfParse?.default;
-  if (typeof parsePdf === 'function') {
-    const data = await parsePdf(buffer);
-    return data?.text || '';
-  }
+  const errors = [];
 
-  const Parser = pdfParse?.PDFParse;
-  if (typeof Parser === 'function') {
-    const parser = new Parser({ data: buffer });
-    try {
-      const result = await parser.getText();
-      return result?.text || '';
-    } finally {
-      if (typeof parser.destroy === 'function') {
-        await parser.destroy();
+  // 1) Try pdf-parse first (supports both legacy callable and v2 class API).
+  try {
+    const parsePdf = typeof pdfParse === 'function' ? pdfParse : pdfParse?.default;
+    if (typeof parsePdf === 'function') {
+      const data = await parsePdf(buffer);
+      const text = data?.text || '';
+      if (text.trim()) return text;
+    }
+
+    const Parser = pdfParse?.PDFParse;
+    if (typeof Parser === 'function') {
+      const parser = new Parser({ data: buffer });
+      try {
+        const result = await parser.getText();
+        const text = result?.text || '';
+        if (text.trim()) return text;
+      } finally {
+        if (typeof parser.destroy === 'function') {
+          await parser.destroy();
+        }
       }
     }
+
+    errors.push('pdf-parse returned empty text');
+  } catch (err) {
+    errors.push(`pdf-parse failed: ${err.message}`);
   }
 
-  throw new Error('pdf-parse module did not export a supported parser API.');
+  // 2) Fallback to pdfjs text extraction for problematic PDFs.
+  try {
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+    if (pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+    }
+
+    const uint8Array = new Uint8Array(buffer);
+    const pdfDoc = await pdfjsLib.getDocument({ data: uint8Array }).promise;
+    const pages = [];
+
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = (textContent.items || [])
+        .map((item) => item.str || '')
+        .join(' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (pageText) pages.push(pageText);
+    }
+
+    const fallbackText = pages.join('\n\n').trim();
+    if (fallbackText) return fallbackText;
+    errors.push('pdfjs fallback returned empty text');
+  } catch (err) {
+    errors.push(`pdfjs fallback failed: ${err.message}`);
+  }
+
+  throw new Error(`Failed to parse PDF text. ${errors.join(' | ')}`);
 }
 
 async function extractTextFromDOCX(buffer) {

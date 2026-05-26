@@ -18,8 +18,27 @@ const EMBED_BATCH_SIZE = 5; // parallel embedding requests
 // ---------------------------------------------------------------------------
 
 async function extractTextFromPDF(buffer) {
-  const data = await pdfParse(buffer);
-  return data.text || '';
+  // Support both legacy pdf-parse (callable function) and v2 API (PDFParse class).
+  const parsePdf = typeof pdfParse === 'function' ? pdfParse : pdfParse?.default;
+  if (typeof parsePdf === 'function') {
+    const data = await parsePdf(buffer);
+    return data?.text || '';
+  }
+
+  const Parser = pdfParse?.PDFParse;
+  if (typeof Parser === 'function') {
+    const parser = new Parser({ data: buffer });
+    try {
+      const result = await parser.getText();
+      return result?.text || '';
+    } finally {
+      if (typeof parser.destroy === 'function') {
+        await parser.destroy();
+      }
+    }
+  }
+
+  throw new Error('pdf-parse module did not export a supported parser API.');
 }
 
 async function extractTextFromDOCX(buffer) {
